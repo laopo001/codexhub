@@ -145,6 +145,15 @@ VSCode/Electron host 注册完整 workspace paths；authority 将每个 path 投
 并用 surface identity/group 保留其 workspace 来源。侧边栏 workspace project group 由该注册集合决定，
 不能只看 active path。
 
+### Authority open-thread sidebar
+
+侧栏的 Open threads 汇总当前 authority 下所有已连接窗口显式打开的 thread，包含 local、SSH 和 registered machines。
+共享 Web 通过现有 `/api/events/ws` 的 `set_open_threads` 上报当前窗口的 tab 集合；authority 用 `open_threads` 推送按 `machineId + threadId` 去重的并集。
+窗口关闭或连接断开只撤销该连接的集合；其他窗口仍打开的条目继续保留。重连重新上报当前集合，旧连接关闭不会撤销新连接的集合。
+
+这是 transient 控制面投影，不写入 config 或改变任何窗口的 tab snapshot，也不通过 runtime 历史、cwd 或 project 关系推断打开状态。
+点击跨窗口条目时，在当前窗口显式打开该 thread，并携带来源 machine、cwd hint 和存在时的 explicit project target。
+
 ### Surface thread-tab membership
 
 一个 thread tab 属于 surface 的条件是：它由该 surface 显式打开，或存在于该 surface 的精确、

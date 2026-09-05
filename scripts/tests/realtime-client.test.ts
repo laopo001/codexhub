@@ -203,3 +203,30 @@ test("realtime parser rejects malformed and unknown messages", () => {
     type: "projects"
   });
 });
+
+test("open tabs replay after reconnect and wait for server capability before announcing", async () => {
+  const sockets: FakeSocket[] = [];
+  const client = new CodexHubRealtimeClient({
+    url: "ws://localhost/api/events/ws",
+    reconnectDelayMs: 0,
+    webSocketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as WebSocket; },
+    onMessage: () => undefined
+  });
+  const tabs = [{ machineId: "ssh", threadId: "remote", workingDirectory: "/workspace" }];
+  client.setOpenThreads(tabs);
+  client.connect();
+  sockets[0].open();
+  sockets[0].message({ type: "ready" });
+  assert.equal(sockets[0].sent.some((message) => message.type === "set_open_threads"), false);
+  sockets[0].message({ type: "ready", openThreadPresence: true });
+  assert.deepEqual(sockets[0].sent.at(-1), { type: "set_open_threads", threads: tabs });
+  sockets[0].close();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  sockets[1].open();
+  assert.equal(sockets[1].sent.some((message) => message.type === "set_open_threads"), false);
+  sockets[1].message({ type: "ready", openThreadPresence: true });
+  assert.deepEqual(sockets[1].sent.at(-1), { type: "set_open_threads", threads: tabs });
+  client.setOpenThreads([]);
+  assert.deepEqual(sockets[1].sent.at(-1), { type: "set_open_threads", threads: [] });
+  client.disconnect();
+});

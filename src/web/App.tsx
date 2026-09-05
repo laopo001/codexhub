@@ -487,6 +487,7 @@ const App = () => {
   };
 
   const viewModel = {
+    authorityOpenThreads: appState.authorityOpenThreads,
     activeCanStop,
     activeTabThreadId: appState.activeTabThreadId,
     activeDisplayThreadId,

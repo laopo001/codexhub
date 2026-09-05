@@ -1,3 +1,4 @@
+import type { OpenThreadPresence } from "../shared/apiContract.js";
 import type React from "react";
 import type {
   AppServerApprovalDecision,
@@ -128,6 +129,7 @@ export type AppTaskDialogViewModel = {
 };
 
 export type AppSidebarViewModel = {
+  authorityOpenThreads?: OpenThreadPresence[];
   activeTabThreadId: string;
   activeProjectKey: string;
   collapsedProjectMachineKeys: string[];
@@ -147,7 +149,7 @@ export type AppSidebarViewModel = {
   setOfflineProjectsCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSettingsDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTasksDialogOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  switchMachineThread: (threadId: string) => MaybePromise;
+  switchMachineThread: (threadId: string, target?: Pick<OpenThreadPresence, "machineId" | "workingDirectory" | "projectTarget">) => MaybePromise;
   toggleProjectMachineGroup: (key: string) => void;
   toggleProjectPinned: (project: ProjectSummary) => MaybePromise;
 };
@@ -330,7 +332,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   terminateBackgroundTerminal: (threadId: string, processId: string) => MaybePromise;
   submitAuthToken: (event: React.FormEvent<HTMLFormElement>) => void;
   submitProjectPickerPath: (event: React.FormEvent<HTMLFormElement>) => MaybePromise;
-  switchMachineThread: (threadId: string) => MaybePromise;
+  switchMachineThread: (threadId: string, target?: Pick<OpenThreadPresence, "machineId" | "workingDirectory" | "projectTarget">) => MaybePromise;
   threadOrderByMachine: Record<string, string[]>;
   threadPicker: ThreadPickerState | null;
   turnStatusItems: ActivityStatusView[];
@@ -562,7 +564,7 @@ export type AppViewModel = {
 const sidebarKeys = [
   "activeTabThreadId", "activeProjectKey", "collapsedProjectMachineKeys", "deleteProject", "deletingProjectId", "machines",
   "offlineProjectsCollapsed", "openingProjectKey", "showProjectPicker", "projectGroups", "projectScopeLocked",
-  "openThreads", "projectActionError", "selectProject", "sidebarDraftStore", "setOfflineProjectsCollapsed", "setSettingsDialogOpen",
+  "openThreads", "authorityOpenThreads", "projectActionError", "selectProject", "sidebarDraftStore", "setOfflineProjectsCollapsed", "setSettingsDialogOpen",
   "setTasksDialogOpen", "switchMachineThread", "systemStatus", "toggleProjectMachineGroup", "toggleProjectPinned"
 ] as const satisfies readonly (keyof AppSidebarViewModel)[];
 

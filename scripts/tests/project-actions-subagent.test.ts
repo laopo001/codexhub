@@ -1,3 +1,4 @@
+import type { OpenThreadOptions } from "../../src/web/appActions/threadActions.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
@@ -127,6 +128,7 @@ const fixture = async ({
     runtime("machine-b", "/projects/b", true, [staleChildThread])
   ];
   const openThreadCalls: string[] = [];
+  const openThreadOptions: Array<OpenThreadOptions | undefined> = [];
   const subscriptions: Array<{ threadId: string; after: number }> = [];
   const closedThreadIds = new Set([childThreadId]);
   const threadLastSeqs = new Map([[childThreadId, 27]]);
@@ -246,8 +248,9 @@ const fixture = async ({
   const actions = createProjectActions(context, {
     clearActiveThreadIfLatest: () => undefined,
     focusTaskDraftProject: () => undefined,
-    openThread: async (threadId: string) => {
+    openThread: async (threadId: string, options?: OpenThreadOptions) => {
       openThreadCalls.push(threadId);
+      openThreadOptions.push(options);
     },
     subscribeThread: (threadId: string, after: number) => {
       subscriptions.push({ threadId, after });
@@ -259,6 +262,7 @@ const fixture = async ({
     childThreadId,
     closedThreadIds,
     openThreadCalls,
+    openThreadOptions,
     subscriptions,
     threadLastSeqs,
     state: () => ({
@@ -606,4 +610,18 @@ const workspaceSelection = (state: ReturnType<Awaited<ReturnType<typeof fixture>
   activeTabThreadId: state.activeTabThreadId,
   activeTabThreadByMachine: state.activeTabThreadByMachine,
   threadOrderByMachine: state.threadOrderByMachine
+});
+
+
+test("cross-window sidebar opens the explicit remote target without inferring project from cwd", async () => {
+  const fixtureState = await fixture({ fetchImpl: async () => { throw new Error("No fetch expected"); } });
+  const projectTarget = { machineId: "machine-registered", path: "/project" };
+  await fixtureState.actions.switchMachineThread("another-window-thread", {
+    machineId: "machine-registered", workingDirectory: "/workspace", projectTarget
+  });
+  assert.deepEqual(fixtureState.openThreadCalls, ["another-window-thread"]);
+  assert.deepEqual(fixtureState.openThreadOptions, [{
+    expectedMachineId: "machine-registered", preferredWorkingDirectory: "/workspace", projectTarget
+  }]);
+  assert.equal(fixtureState.state().activeMachineId, "machine-registered");
 });

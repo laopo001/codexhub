@@ -61,3 +61,23 @@ test("sidebar open threads preserves opened tabs across local, SSH, and register
     "registered-machine"
   ]);
 });
+
+test("sidebar includes other windows across machines without opening their tabs locally", () => {
+  const localTabs = [thread("thread-local", "machine-local")];
+  const target = { machineId: "machine-ssh", path: "/project-not-cwd" };
+  const entries = [
+    { threadId: "thread-local", machineId: "machine-local", workingDirectory: "/stale", projectTarget: { machineId: "machine-local", path: "/other-window-project" } },
+    { threadId: "thread-ssh", machineId: "machine-ssh", workingDirectory: "/remote/workspace", projectTarget: target },
+    { threadId: "thread-registered", machineId: "machine-registered", workingDirectory: "/registered" }
+  ];
+  const items = sidebarOpenThreadItems(localTabs, [machine("machine-local", "local"), machine("machine-ssh", "ssh"), machine("machine-registered", "registered")], entries);
+  assert.equal(localTabs.length, 1);
+  assert.equal(items.length, 3);
+  assert.deepEqual(items.map((item) => item.machineType), ["local", "ssh", "registered"]);
+  assert.equal(items[0].thread.workingDirectory, "/workspace/thread-local");
+  assert.equal(items[0].thread.projectTarget, undefined);
+  assert.deepEqual(items[1].thread.projectTarget, target);
+  const disconnected = sidebarOpenThreadItems(localTabs, [], entries);
+  assert.equal(disconnected.length, 3);
+  assert.equal(disconnected[1].machineLabel, "machine-ssh");
+});

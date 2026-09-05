@@ -67,6 +67,6 @@ export const formatAgentQuestionAnswers = (
   questions: AgentQuestion[],
   answers: AgentQuestionAnswers
 ) => [
-  "Answers to the assistant's questions:",
+  "Answers to the agent's questions:",
   ...questions.map((question, index) => `- ${question.title}: ${answers[index]?.trim() || "(no answer)"}`)
 ].join("\n");

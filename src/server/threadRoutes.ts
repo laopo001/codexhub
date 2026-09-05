@@ -1,3 +1,4 @@
+import { OpenThreadPresenceHub } from "../core/openThreadPresenceHub.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { MachineHub } from "../core/machineHub.js";
@@ -88,7 +89,10 @@ export const registerThreadRoutes = <
     } satisfies RuntimesPayload;
   });
 
+  const openThreadPresence = new OpenThreadPresenceHub();
+
   app.get("/api/events/ws", { websocket: true }, (socket) => {
+    let unsubscribeOpenThreads: (() => void) | null = null;
     const threadUnsubscribers = new Map<string, () => void>();
     let unsubscribeRuntimes: (() => void) | null = null;
     let projectSubscriber: ((event: ProjectEvent) => void) | null = null;
@@ -105,6 +109,8 @@ export const registerThreadRoutes = <
     };
 
     const unsubscribeControl = () => {
+      unsubscribeOpenThreads?.();
+      unsubscribeOpenThreads = null;
       unsubscribeRuntimes?.();
       unsubscribeRuntimes = null;
       if (projectSubscriber) ctx.projectSubscribers.delete(projectSubscriber);
@@ -146,7 +152,8 @@ export const registerThreadRoutes = <
       ctx.projectSubscribers.add(projectSubscriber);
       ctx.taskSubscribers.add(taskSubscriber);
       ctx.connectionSubscribers.add(connectionSubscriber);
-      send({ type: "ready" });
+      unsubscribeOpenThreads = openThreadPresence.subscribe((threads) => send({ type: "open_threads", threads }));
+      send({ type: "ready", openThreadPresence: true });
     };
 
     const subscribeThread = (threadId: string, after = 0) => {
@@ -181,6 +188,7 @@ export const registerThreadRoutes = <
 
     const closeSubscriptions = () => {
       unsubscribeControl();
+      openThreadPresence.remove(socket);
       for (const unsubscribe of threadUnsubscribers.values()) unsubscribe();
       threadUnsubscribers.clear();
     };
@@ -196,6 +204,10 @@ export const registerThreadRoutes = <
 
       if (parsed.type === "hello") {
         subscribeControl(parsed);
+        return;
+      }
+      if (parsed.type === "set_open_threads") {
+        if (unsubscribeOpenThreads) openThreadPresence.set(socket, parsed.threads);
         return;
       }
       if (parsed.type === "subscribe_thread") {

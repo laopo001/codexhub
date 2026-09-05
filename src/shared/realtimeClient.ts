@@ -1,4 +1,4 @@
-import type { RealtimeMessage, RealtimeOutgoingMessage } from "./apiContract.js";
+import type { OpenThreadPresence, RealtimeMessage, RealtimeOutgoingMessage } from "./apiContract.js";
 import { asRecord } from "./recordTypes.js";
 import type { ThreadStreamEvent } from "./threadTypes.js";
 
@@ -21,6 +21,7 @@ export type CodexHubRealtimeClientOptions = {
 };
 
 const realtimeMessageTypes = new Set([
+  "open_threads",
   "runtimes",
   "projects",
   "tasks",
@@ -72,6 +73,8 @@ export const threadCursorAfterEvent = (
 const webSocketOpenState = 1;
 
 export class CodexHubRealtimeClient {
+  private openThreads: OpenThreadPresence[] = [];
+  private supportsOpenThreadPresence = false;
   private socket: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
@@ -110,6 +113,11 @@ export class CodexHubRealtimeClient {
     return this.sendRaw(message);
   }
 
+  setOpenThreads(threads: OpenThreadPresence[]) {
+    this.openThreads = threads;
+    if (this.supportsOpenThreadPresence) this.sendRaw({ type: "set_open_threads", threads });
+  }
+
   subscribeThread(threadId: string, after = 0) {
     return this.send({ type: "subscribe_thread", threadId, after });
   }
@@ -120,6 +128,7 @@ export class CodexHubRealtimeClient {
 
   private openSocket() {
     if (this.stopped) return;
+    this.supportsOpenThreadPresence = false;
     const previous = this.socket;
     this.socket = null;
     previous?.close();
@@ -169,6 +178,10 @@ export class CodexHubRealtimeClient {
   }
 
   private rememberIncoming(message: RealtimeMessage) {
+    if (message.type === "ready" && message.openThreadPresence) {
+      this.supportsOpenThreadPresence = true;
+      this.sendRaw({ type: "set_open_threads", threads: this.openThreads });
+    }
     if (message.type === "runtimes") this.cursors.runtimesAfter = maxCursor(this.cursors.runtimesAfter, message.seq);
     if (message.type === "projects") this.cursors.projectsAfter = maxCursor(this.cursors.projectsAfter, message.seq);
     if (message.type === "tasks") this.cursors.tasksAfter = maxCursor(this.cursors.tasksAfter, message.seq);

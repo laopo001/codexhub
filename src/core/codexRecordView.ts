@@ -230,16 +230,21 @@ const eventMessageToView = (record: CodexRecord, payload: Record<string, unknown
     const phase = typeof payload.phase === "string" ? payload.phase : "assistant";
     const status = recordViewStatusFromAppStatus(payload.status);
     const statusText = recordViewStatusText(payload.status);
+    const hasAgentQuestions = Array.isArray(payload.questions)
+      && payload.questions.some((question) => {
+        const value = asRecord(question);
+        return typeof value?.title === "string" && value.title.trim().length > 0;
+      });
     return {
       id: record.id,
       role: "codex",
-      label: phase,
+      label: hasAgentQuestions ? "agent_question" : phase,
       text: payload.message,
       at: record.timestamp,
       status,
       statusText,
       ...(Array.isArray(payload.questions) ? { agentQuestions: payload.questions as CodexRecordView["agentQuestions"] } : {}),
-      canFork: phase === "final_answer" && !isActiveRecordStatus(status),
+      canFork: !hasAgentQuestions && phase === "final_answer" && !isActiveRecordStatus(status),
       record
     };
   }

@@ -499,6 +499,18 @@ export type ConnectionsStreamEvent = {
   registration?: ParentRegistrationStatus;
 };
 
+/** 当前窗口显式打开的 thread；projectTarget 只能来自用户打开动作。 */
+export const openThreadPresenceSchema = z.object({
+  threadId: z.string().min(1),
+  machineId: z.string().min(1),
+  workingDirectory: z.string(),
+  title: z.string().optional(),
+  projectTarget: z.object({ machineId: z.string().min(1), path: z.string().min(1) }).strict().optional()
+}).strict().refine((value) => !value.projectTarget || value.projectTarget.machineId === value.machineId, {
+  message: "Open thread project target must belong to the same machine"
+});
+export type OpenThreadPresence = z.infer<typeof openThreadPresenceSchema>;
+
 /** WebSocket 从 server 发给 Web 的所有入站消息。 */
 export type RealtimeMessage =
   | ({ type: "runtimes" } & RuntimeStreamEvent)
@@ -506,7 +518,8 @@ export type RealtimeMessage =
   | ({ type: "tasks" } & TasksStreamEvent)
   | ({ type: "connections" } & ConnectionsStreamEvent)
   | ({ type: ThreadStreamEvent["kind"] } & ThreadStreamEvent)
-  | { type: "ready" }
+  | { type: "open_threads"; threads: OpenThreadPresence[] }
+  | { type: "ready"; openThreadPresence?: boolean }
   | { type: "thread_subscribed" | "thread_unsubscribed"; threadId: string }
   | { type: "error"; message: string; scope?: string; threadId?: string };
 
@@ -1071,6 +1084,10 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export const webEventsMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("set_open_threads"),
+    threads: z.array(openThreadPresenceSchema).max(1000)
+  }).strict(),
   z.object({
     type: z.literal("hello"),
     runtimesAfter: z.number().int().min(0).optional(),

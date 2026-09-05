@@ -497,6 +497,23 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
     state.openThreads.length
   ]);
 
+  const openThreadPresenceKey = JSON.stringify(state.openThreads.flatMap((thread) => {
+    const machineId = thread.runtime.machineId;
+    if (!machineId) return [];
+    const projectTarget = state.threadProjectTargets[thread.threadId];
+    return [{
+      threadId: thread.threadId,
+      machineId,
+      workingDirectory: thread.workingDirectory,
+      ...(thread.title ? { title: thread.title } : {}),
+      ...(projectTarget?.machineId === machineId ? { projectTarget } : {})
+    }];
+  }));
+  useEffect(() => {
+    if (!state.initialized) return;
+    state.realtimeClient.current?.setOpenThreads(JSON.parse(openThreadPresenceKey));
+  }, [state.initialized, openThreadPresenceKey]);
+
   useEffect(() => {
     if (!state.initialized) return;
     actions.syncThreadSubscriptions(

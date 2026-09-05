@@ -667,7 +667,7 @@ export const approvalDecisionActions = (
 export const canRenderMarkdown = (message: WebRecordView) => {
   if (message.role !== "codex") return false;
   const label = message.label.toLowerCase();
-  return label === "commentary" || label === "final_answer" || label === "assistant";
+  return label === "commentary" || label === "final_answer" || label === "agent_question" || label === "assistant";
 };
 
 export const markdownCodeLanguage = (className: string | undefined) => {

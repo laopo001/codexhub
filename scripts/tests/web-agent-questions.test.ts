@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { codexRecordFromAppServerItem } from "../../src/core/threadAppServerRecords.js";
 import { recordToView } from "../../src/core/codexRecordView.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
-import { MessageCard } from "../../src/web/helpers/components.js";
+import { canRenderMarkdown, MessageCard } from "../../src/web/helpers/components.js";
 import {
   formatAgentQuestionAnswers,
   rememberAgentQuestionAnswers,
@@ -40,6 +40,9 @@ test("async agent questions survive projection and render an actionable form", (
   const record = agentRecord();
   assert.ok(record);
   const view = recordToView(record);
+  assert.equal(view?.label, "agent_question");
+  assert.equal(view?.canFork, false);
+  assert.equal(canRenderMarkdown(view!), true);
   assert.deepEqual(view?.agentQuestions, [
     { title: "Scope", options: ["Small", "Large"] },
     { title: "Notes", options: null }
@@ -73,7 +76,7 @@ test("duplicate question titles keep separate stable-index answers and blank ans
   assert.equal(formatAgentQuestionAnswers([
     { title: "Same", options: ["One"] },
     { title: "Same", options: ["Two"] }
-  ], { 0: "One", 1: "Two" }), "Answers to the assistant's questions:\n- Same: One\n- Same: Two");
+  ], { 0: "One", 1: "Two" }), "Answers to the agent's questions:\n- Same: One\n- Same: Two");
   const markup = renderToStaticMarkup(createElement(MessageCard, {
     message: view!,
     renderMode: "raw",
@@ -92,7 +95,7 @@ test("agent answer text keeps every question explicit", () => {
       { title: "Scope", options: ["Small"] },
       { title: "Notes", options: null }
     ], { 0: "Small", 1: "Use the existing path" }),
-    "Answers to the assistant's questions:\n- Scope: Small\n- Notes: Use the existing path"
+    "Answers to the agent's questions:\n- Scope: Small\n- Notes: Use the existing path"
   );
 });
 

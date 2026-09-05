@@ -46,6 +46,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
     offlineProjectsCollapsed,
     openingProjectKey,
     openThreads,
+    authorityOpenThreads,
     showProjectPicker,
     projectGroups,
     projectScopeLocked,
@@ -80,7 +81,8 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
   const visibleProjectGroups = filterProjectMachineGroupsBySearch(projectGroups, projectQuery);
   const onlineProjectGroups = visibleProjectGroups.filter((machine) => machine.online);
   const offlineProjectGroups = visibleProjectGroups.filter((machine) => !machine.online);
-  const visibleOpenThreads = sidebarOpenThreadItems(openThreads, machines).filter((item) => {
+  const allOpenThreads = sidebarOpenThreadItems(openThreads, machines, authorityOpenThreads);
+  const visibleOpenThreads = allOpenThreads.filter((item) => {
     if (!threadQuery) return true;
     return [
       threadDisplayTitle(item.thread),
@@ -235,7 +237,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
             <span className="projectGroupCountBadge">
               {catalogMode === "projects"
                 ? `${projectGroups.length} ${projectGroups.length === 1 ? "group" : "groups"}`
-                : `${openThreads.length} open`}
+                : `${allOpenThreads.length} open`}
             </span>
             <button
               type="button"
@@ -323,9 +325,13 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
               return (
                 <button
                   type="button"
-                  key={thread.threadId}
+                  key={JSON.stringify([thread.runtime.machineId, thread.threadId])}
                   className={`openThreadSidebarRow${active ? " active" : ""}`}
-                  onClick={() => void switchMachineThread(thread.threadId)}
+                  onClick={() => void switchMachineThread(thread.threadId, {
+                    machineId: thread.runtime.machineId,
+                    workingDirectory: thread.workingDirectory,
+                    projectTarget: thread.projectTarget
+                  })}
                   aria-label={`Open thread ${title}`}
                   aria-current={active ? "true" : undefined}
                   title={`${title}\n${thread.workingDirectory}\n${thread.threadId}`}

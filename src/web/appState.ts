@@ -1,3 +1,4 @@
+import type { OpenThreadPresence } from "../shared/apiContract.js";
 import { useReducer, useRef, useState } from "react";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
@@ -124,6 +125,7 @@ export const useAppState = () => {
     threadTabContextMenu
   } = uiState;
   const [activeWorkspacePath, setActiveWorkspacePath] = useState("");
+  const [authorityOpenThreads, setAuthorityOpenThreads] = useState<OpenThreadPresence[]>([]);
   const [openThreads, dispatchOpenThreads] = useReducer(openThreadReducer, []);
   const openThreadIdsRef = useRef(new Set<string>());
   openThreadIdsRef.current = new Set(openThreads.map((thread) => thread.threadId));
@@ -246,6 +248,8 @@ export const useAppState = () => {
     openingSubagentThreads,
     openingThreads,
     openThreads,
+    authorityOpenThreads,
+    setAuthorityOpenThreads,
     openThreadIdsRef,
     pendingRestoreActiveThreadId,
     pendingRestoreAttemptCountsRef,

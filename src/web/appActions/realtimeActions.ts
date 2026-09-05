@@ -1,3 +1,4 @@
+import type { OpenThreadPresence } from "../../shared/apiContract.js";
 import type React from "react";
 import type { MachineActivityStatus } from "../../shared/machineTypes.js";
 import type { RealtimeOutgoingMessage } from "../../shared/apiContract.js";
@@ -125,6 +126,7 @@ type RealtimeActionsContext = {
   setProjects: React.Dispatch<React.SetStateAction<ProjectSummary[]>>;
   setSelectedProjectKey: React.Dispatch<React.SetStateAction<string>>;
   setServerAuthRequired: React.Dispatch<React.SetStateAction<boolean>>;
+  setAuthorityOpenThreads?: React.Dispatch<React.SetStateAction<OpenThreadPresence[]>>;
   setRuntimeList: React.Dispatch<React.SetStateAction<RuntimeSummary[]>>;
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   dispatchConversationThread: (action: ConversationThreadAction) => void;
@@ -399,6 +401,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
         connectionsAfter: ctx.connectionsLastSeq.current
       },
       onMessage: handleRealtimeMessage,
+      onClose: () => ctx.setAuthorityOpenThreads?.([]),
       onOpen: () => {
         void authorityInstanceRecovery.checkAfterReconnect(
           () => apiRouteJson(apiRoutes.health),
@@ -415,6 +418,10 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
 
   function handleRealtimeMessage(message: RealtimeMessage) {
     recordRendererRealtimeEvent(message);
+    if (message.type === "open_threads") {
+      ctx.setAuthorityOpenThreads?.(message.threads);
+      return;
+    }
     if (message.type === "runtimes") {
       const payload = message;
       ctx.runtimesLastSeq.current = Math.max(ctx.runtimesLastSeq.current, payload.seq);

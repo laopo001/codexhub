@@ -51,7 +51,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## App-server Thread Sync 和实时流
 
 1. Web 只维护一条 `/api/events/ws`。连接后发送 `hello` 订阅 control-plane snapshots，再用 `subscribe_thread` / `unsubscribe_thread` 多路复用页面 thread tabs。
-2. Control-plane 事件包括 `runtimes`、`projects`、`tasks`、`connections`；thread 事件只包括 `thread`、`record`、`done`。
+2. Control-plane 事件包括 `runtimes`、`projects`、`tasks`、`connections`、`open_threads`；thread 事件只包括 `thread`、`record`、`done`。
 3. 浏览器不直接连接官方 app-server。server 通过内部 session command 发送 `subscribe_thread_records` / `unsubscribe_thread_records`，由 machine bridge 负责 app-server turns snapshot 和 live events。
 4. 每个被 Web 订阅的 thread 在一个 bridge 里只能有一份 thread records subscription。server 对 thread subscription 做 ref-count，并用 `CODEX_HUB_THREAD_RECORD_SUBSCRIPTION_IDLE_MS` 做 idle grace。
 5. Thread records subscription 只由 Web thread tab 订阅驱动。解绑后要保留 still-subscribed race guard，避免刚 unsubscribe 又被旧 async sync 重新写入。 首次历史同步只读取最近的官方 turns 页，Web `/history` 向上翻页才驱动后续读取；官方 cursor 留在 machine bridge 内，旧响应必须校验订阅与 snapshot 代次，不能改写新代次的分页状态。

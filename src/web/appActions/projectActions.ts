@@ -1,3 +1,4 @@
+import type { OpenThreadPresence } from "../../shared/apiContract.js";
 import type React from "react";
 import { Modal } from "antd";
 import type { ProjectUpdateInput } from "../../shared/apiContract.js";
@@ -121,7 +122,7 @@ export type ProjectActions = {
   toggleProjectPinned: (project: ProjectSummary) => Promise<void>;
   toggleProjectMachineGroup: (machineKey: string) => void;
   openSubagentThread: (threadId: string, options?: SubagentThreadOpenOptions) => Promise<void>;
-  switchMachineThread: (threadId: string) => Promise<void>;
+  switchMachineThread: (threadId: string, target?: Pick<OpenThreadPresence, "machineId" | "workingDirectory" | "projectTarget">) => Promise<void>;
 };
 
 export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectActionsDependencies): ProjectActions => {
@@ -815,10 +816,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     }
   };
 
-  const switchMachineThread = async (threadId: string) => {
+  const switchMachineThread: ProjectActions["switchMachineThread"] = async (threadId, target) => {
     if (threadId === ctx.activeTabThreadId) return;
     const thread = ctx.openThreads.find((item) => item.threadId === threadId);
-    const machineId = thread?.runtime.machineId ?? ctx.activeRuntime?.machineId ?? "";
+    const machineId = thread?.runtime.machineId ?? target?.machineId ?? ctx.activeRuntime?.machineId ?? "";
     if (machineId) {
       if (!ctx.selectedProjectKey) ctx.setActiveMachineId(machineId);
       ctx.setActiveTabThreadByMachine((current) => ({ ...current, [machineId]: threadId }));
@@ -826,7 +827,11 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     if (thread) {
       if (!ctx.selectedProjectKey) ctx.setActiveWorkspacePath(thread.workingDirectory);
     }
-    await deps.openThread(threadId).catch(() => deps.clearActiveThreadIfLatest(threadId));
+    await deps.openThread(threadId, target ? {
+      expectedMachineId: target.machineId,
+      preferredWorkingDirectory: target.workingDirectory,
+      ...(target.projectTarget ? { projectTarget: target.projectTarget } : {})
+    } : undefined).catch(() => deps.clearActiveThreadIfLatest(threadId));
   };
 
   return {
