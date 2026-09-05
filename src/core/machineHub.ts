@@ -246,19 +246,20 @@ export class MachineHub {
 
   async waitMachineCommands(machineId: string, after: number, timeoutMs = 25_000) {
     const machine = this.machines.get(machineId);
-    if (!machine) return { machineId, cursor: after, commands: [] };
+    if (!machine?.online) throw new Error(`Machine is offline: ${machineId}`);
     if (machineCommandsAfter(machine, after).length === 0) {
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, timeoutMs);
-        timer.unref?.();
         const waiter = () => {
           clearTimeout(timer);
           machine.waiters.delete(waiter);
           resolve();
         };
+        const timer = setTimeout(waiter, timeoutMs);
+        timer.unref?.();
         machine.waiters.add(waiter);
       });
     }
+    if (!machine.online) throw new Error(`Machine is offline: ${machineId}`);
     const commands = machineCommandsAfter(machine, after);
     return {
       machineId,

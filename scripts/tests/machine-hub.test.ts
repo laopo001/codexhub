@@ -38,3 +38,12 @@ test("shared machine guard preserves offline errors before capability errors", (
     /Machine is offline: machine-test/
   );
 });
+
+test("machine disconnect terminates command polling instead of spinning on empty batches", async () => {
+  const hub = new MachineHub();
+  register(hub);
+  const rejected = assert.rejects(hub.waitMachineCommands("machine-test", 0, 60_000), /Machine is offline/);
+  hub.disconnectMachine("machine-test");
+  await rejected;
+  await assert.rejects(hub.waitMachineCommands("missing", 0, 60_000), /Machine is offline/);
+});

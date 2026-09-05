@@ -7,7 +7,8 @@ export const waitForSessionCommands = async (
   after: number,
   timeoutMs: number
 ) => {
-  if (!session) return { sessionId, cursor: after, commands: [] as SessionCommand[] };
+  // 失效的 runtime 是终止条件，不能返回立即完成的空批次让 transport 忙循环。
+  if (!session?.online) throw new Error(`Session is offline: ${sessionId}`);
   if (commandsAfter(session, after).length === 0) {
     await new Promise<void>((resolve) => {
       let timer: NodeJS.Timeout;
@@ -20,6 +21,7 @@ export const waitForSessionCommands = async (
       session.waiters.add(waiter);
     });
   }
+  if (!session.online) throw new Error(`Session is offline: ${sessionId}`);
   const commands = commandsAfter(session, after);
   return {
     sessionId,
