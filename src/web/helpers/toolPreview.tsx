@@ -385,6 +385,7 @@ const appServerToolPresenters: Record<string, AppServerToolPresenter> = {
       return (
         <ToolPreview
           title="tool: shell"
+          className={shellExitShownInStatus(payload) && payload.exit_code !== 0 ? "shellNonzeroExit" : undefined}
           status={status}
           statusText={statusText}
           statusDurationMs={statusDurationMs}

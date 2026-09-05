@@ -1636,6 +1636,11 @@
   color: #236c47;
 }
 
+.shellNonzeroExit .messageStatus.completed {
+  background: #fff1b8;
+  color: #874d00;
+}
+
 .messageStatus.failed {
   background: #fbe3df;
   color: #9b2f25;
