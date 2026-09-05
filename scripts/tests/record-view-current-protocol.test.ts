@@ -1513,10 +1513,16 @@ test("thinking and sleep auto-hide together only when followed by another visibl
     { id: "answer", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done" }] } }
   ];
   const views = recordsToViews(records);
-  assert.deepEqual(hideSupersededThinkingAndSleepViews(views, true).map((view) => view.id), ["answer"]);
-  assert.deepEqual(hideSupersededThinkingAndSleepViews(views.slice(0, 2), true).map((view) => view.id), ["sleep"]);
-  assert.deepEqual(hideSupersededThinkingAndSleepViews(views.slice(0, 1), true).map((view) => view.id), ["thinking"]);
-  assert.deepEqual(hideSupersededThinkingAndSleepViews(views, false).map((view) => view.id), ["thinking", "sleep", "answer"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views).map((view) => view.id), ["answer"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views.slice(0, 2)).map((view) => view.id), ["thinking", "sleep"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews(views.slice(0, 1)).map((view) => view.id), ["thinking"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews([...views, ...views.slice(0, 2)]).map((view) => view.id), ["answer", "thinking", "sleep"]);
+  assert.deepEqual(hideSupersededThinkingAndSleepViews([]), []);
+  const { conversationViewsFromRecords } = await import("../../src/web/helpers/conversationViews.js");
+  assert.deepEqual(conversationViewsFromRecords(records.slice(0, 2)).map((view) => view.id), ["thinking", "sleep"]);
+  assert.deepEqual(conversationViewsFromRecords(records).map((view) => view.id), ["answer"]);
+  const tool: CodexRecord = { id: "tool", type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "call-tool", arguments: '{"cmd":"pwd"}' } };
+  assert.deepEqual(conversationViewsFromRecords([...records.slice(0, 2), tool]).map((view) => view.id), ["compact-tool:call-tool"]);
   assert.equal(views[1].record, records[1]);
   assert.equal(views.length, 3);
 });

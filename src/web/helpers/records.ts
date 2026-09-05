@@ -454,21 +454,17 @@ export const recordHasPendingInteraction = (record: CodexRecord) => {
 export const recordsHavePendingInteraction = (records: CodexRecord[]) =>
   records.some(recordHasPendingInteraction);
 
-// 关闭后，thinking 和 sleep 在出现后续消息时仍会保留。
-export const AUTO_HIDE_THINKING_AND_SLEEP = false;
-
+// 末尾连续的 thinking / sleep 保留，直到出现其他可见消息。
 export const hideSupersededThinkingAndSleepViews = (
-  views: CodexRecordView[],
-  enabled: boolean = AUTO_HIDE_THINKING_AND_SLEEP
+  views: CodexRecordView[]
 ) => {
-  if (!enabled) return views;
-  let hasLaterView = false;
+  let hasLaterNonTransientView = false;
   const nextViews: CodexRecordView[] = [];
   for (let index = views.length - 1; index >= 0; index -= 1) {
     const view = views[index];
     const autoHide = view.role === "thinking" || asRecord(view.record.payload)?.type === "sleep";
-    if (!(autoHide && hasLaterView)) nextViews.push(view);
-    hasLaterView = true;
+    if (!(autoHide && hasLaterNonTransientView)) nextViews.push(view);
+    if (!autoHide) hasLaterNonTransientView = true;
   }
   return nextViews.reverse();
 };
