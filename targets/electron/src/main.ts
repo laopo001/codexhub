@@ -483,7 +483,7 @@ const handleHostActivityOpenTarget = (
     }
     // 当 VSCode 无法唤起时（如 hostname mismatch 或无本地 CLI）：
     // 若开启 fallbackToElectron（如通知点击），则回退聚焦 Electron 并打开 thread；
-    // Pet/notification callers may safely fall back to Electron; never launch from cwd/projectPath.
+    // 桌宠点击匹配不到目标时不打开其他窗口；不从 cwd/projectPath 推断 VSCode 目标。
     if (options?.fallbackToElectron && target.threadId.trim()) {
       void focusMainWindowForThread(target.threadId.trim());
       return true;
@@ -505,7 +505,7 @@ ipcMain.on("codexhub:pet-open-activity", (event, value: unknown) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
   const target = parsePetActivityOpenTarget(value);
-  handleHostActivityOpenTarget(target, { fallbackToElectron: true });
+  handleHostActivityOpenTarget(target, { fallbackToElectron: false });
 });
 
 ipcMain.on("codexhub:task-complete-notification", (event, value: unknown) => {

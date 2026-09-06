@@ -289,6 +289,7 @@ const ComposerThreadControls = ({
   const canCompactThread = !thread.running;
   const contextUsageLabel = formatContextUsage(threadUsage);
   const contextPercent = contextUsagePercent(threadUsage);
+  const contextLevel = contextPercent == null ? undefined : contextPercent < 50 ? "low" : contextPercent <= 80 ? "medium" : "high";
   const contextProgressStyle = contextPercent == null
     ? undefined
     : ({ "--context-progress": `${contextPercent}%` } as React.CSSProperties);
@@ -323,6 +324,7 @@ const ComposerThreadControls = ({
             <button
               type="button"
               className="usagePill contextCompactButton"
+              data-context-level={contextLevel}
               disabled={!canCompactThread}
               aria-label={`Context ${contextUsageLabel}. Compact context`}
               style={contextProgressStyle}

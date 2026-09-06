@@ -192,7 +192,7 @@ export const formatComposerModelTitle = (
   threadModel ? `thread model ${rawModelLabel(threadModel)}` : null,
   `draft thinking ${reasoningDisplayLabel(reasoningDraft)}`,
   threadReasoning ? `thread thinking ${reasoningDisplayLabel(threadReasoning)}` : null,
-  `draft tier ${serviceTierDraft === "auto" ? "Auto" : serviceTierDisplayLabel(serviceTierDraft)}`,
+  `draft tier ${serviceTierDraft === "auto" ? "auto" : serviceTierDisplayLabel(serviceTierDraft)}`,
   threadServiceTier ? `thread tier ${serviceTierDisplayLabel(threadServiceTier)}` : null
 ].filter(Boolean).join(" · ");
 

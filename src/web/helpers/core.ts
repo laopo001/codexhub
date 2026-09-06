@@ -1088,22 +1088,8 @@ export const modelOptionSearchMatches = (option: SearchableModelOption | undefin
   return terms.every((term) => searchText.includes(term));
 };
 
-const reasoningEffortLabels: Record<string, string> = {
-  auto: "Auto",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra High",
-  max: "Max",
-  ultra: "Ultra"
-};
-
-export const reasoningDisplayLabel = (value: string, catalogLabel?: string) => {
-  const label = catalogLabel?.trim();
-  if (label && label !== value) return label;
-  return reasoningEffortLabels[value] ?? value;
-};
+export const reasoningDisplayLabel = (value: string, catalogLabel?: string) =>
+  (catalogLabel?.trim() || value).toLowerCase();
 
 export const reasoningOptionLabel = (option: { value: string; label: string }) =>
   option.value;
@@ -1112,11 +1098,11 @@ export const isFastServiceTier = (tier: string | null | undefined) =>
   tier === "priority" || tier === "fast";
 
 export const serviceTierDisplayLabel = (tier: string, catalogLabel?: string) => {
-  if (tier === "auto") return "Default";
-  if (isFastServiceTier(tier)) return "Fast";
-  if (tier === "default") return "Standard";
+  if (tier === "auto") return "default";
+  if (isFastServiceTier(tier)) return "fast";
+  if (tier === "default") return "standard";
   const label = catalogLabel?.trim();
-  return label && label !== tier ? label : tier;
+  return (label || tier).toLowerCase();
 };
 
 export const serviceTierOptionLabel = (option: { value: string; label: string }) =>
@@ -1217,7 +1203,7 @@ export const serviceTierOptionsForSelection = (
   const options = [
     {
       value: "auto",
-      label: "Default",
+      label: "default",
       description: "Follow your configured Codex service tier for subsequent turns."
     },
     ...dedupeOptions(catalogOptions)

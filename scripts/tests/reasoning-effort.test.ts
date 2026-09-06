@@ -52,11 +52,11 @@ test("record config extraction preserves Ultra without adopting child-agent sett
   }), {});
   assert.equal(
     formatComposerModelButtonLabel("auto", "auto", "auto", "gpt-test", "max"),
-    "gpt-test:Max"
+    "gpt-test:max"
   );
   assert.equal(
     formatComposerModelButtonLabel("auto", "auto", "batch", "gpt-test", "max"),
-    "gpt-test:Max · batch"
+    "gpt-test:max · batch"
   );
 });
 
@@ -194,10 +194,10 @@ test("service tier choices keep the clear-to-default path and use product-facing
 
   const options = serviceTierOptionsForSelection("priority", catalog, "gpt-5.6-sol");
   assert.deepEqual(options.map((option) => option.value), ["auto", "priority"]);
-  assert.deepEqual(options.map(serviceTierOptionLabel), ["Default", "Fast"]);
+  assert.deepEqual(options.map(serviceTierOptionLabel), ["default", "fast"]);
   assert.match(options[0]?.description ?? "", /configured Codex service tier/);
-  assert.equal(serviceTierDisplayLabel("fast"), "Fast");
-  assert.equal(serviceTierDisplayLabel("default"), "Standard");
+  assert.equal(serviceTierDisplayLabel("fast"), "fast");
+  assert.equal(serviceTierDisplayLabel("default"), "standard");
   assert.equal(isFastServiceTier("priority"), true);
   assert.equal(isFastServiceTier("fast"), true);
   assert.equal(isFastServiceTier("batch"), false);

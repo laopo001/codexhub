@@ -393,7 +393,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
                 onChange={(value) => setThreadModelDialogServiceTierDraft(value as ServiceTierSelection)}
               />
               <small className="sessionDialogFieldHint">
-                Used for subsequent turns. Default follows your Codex configuration.
+                Used for subsequent turns. The default option follows your Codex configuration.
               </small>
             </label>
             {modelCatalogNotice ? (
