@@ -6,6 +6,7 @@ export type CodexHubHostIncomingMessage =
 
 export type CodexHubHostOutgoingMessage =
   | { type: "codexhub.openFile"; path: string; line?: number; column?: number }
+  | { type: "codexhub.openExternal"; url: string }
   | { type: "codexhub.taskCompleteNotification"; notification: TaskCompleteNotification };
 
 export const parseCodexHubHostIncomingMessage = (value: unknown): CodexHubHostIncomingMessage | null => {

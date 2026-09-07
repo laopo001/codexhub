@@ -30,6 +30,7 @@ import {
 } from "../../../src/shared/taskNotifications.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
+import { httpUrlFromValue } from "../../../src/shared/externalUrl.js";
 import {
   configuredVscodeAuthorityAuthToken,
   removeLegacyVscodeAuthorityTokenFile
@@ -293,6 +294,10 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       await this.openFileFromWebview(record);
       return;
     }
+    if (record?.type === "codexhub.openExternal") {
+      await this.openExternalFromWebview(record);
+      return;
+    }
     if (record?.type !== "codexhub.taskCompleteNotification") return;
     const notification = isTaskCompleteNotification(record.notification) ? record.notification : null;
     const rawNotification = asRecord(record.notification);
@@ -350,6 +355,16 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       });
     } catch (error) {
       await vscode.window.showWarningMessage(`Codex Hub could not open ${path.basename(filePath)}: ${errorText(error)}`);
+    }
+  }
+
+  private async openExternalFromWebview(record: Record<string, unknown>) {
+    const url = httpUrlFromValue(record.url);
+    if (!url) return;
+    try {
+      await vscode.env.openExternal(vscode.Uri.parse(url));
+    } catch (error) {
+      await vscode.window.showWarningMessage(`Codex Hub could not open ${url}: ${errorText(error)}`);
     }
   }
 

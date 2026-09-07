@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
-import { Button, Modal, Switch } from "antd";
+import { Button, Dropdown, Modal, Switch } from "antd";
 import { X } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
@@ -8,6 +8,7 @@ import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
 import type { ActivityStatusFile, ActivityStatusPlanStep, ActivityStatusView, BackgroundTerminalView, ImagePreviewState, MemoryCitationView, MessageRenderMode, ThreadExecutionMeta, WebRecordView } from "../types.js";
 import type { AppServerApprovalDecision, AppServerUserInputAnswers, FilePreviewPayload } from "../../shared/apiContract.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
+import { httpUrlFromValue } from "../../shared/externalUrl.js";
 import { asRecord, type SubagentActivityView } from "../../shared/recordTypes.js";
 import { updatePlanStatusIcon } from "../../shared/updatePlanView.js";
 import { apiRouteJson, authFetch, authToken } from "./core.js";
@@ -682,7 +683,6 @@ export const MessageText = ({
   mode,
   markdownEnabled,
   threadMachineId,
-  threadWorkingDirectory,
   onOpenImage
 }: {
   text: string;
@@ -693,9 +693,7 @@ export const MessageText = ({
   onOpenImage?: (image: ImagePreviewState) => void;
 }) => {
   const [filePreview, setFilePreview] = useState<FilePreviewDialogState | null>(null);
-  const handleFileLinkClick = useCallback((target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleFileLinkOpen = useCallback((target: LocalFileLinkTarget) => {
     if (isVscodeSurface) {
       window.parent?.postMessage({
         type: "codexhub.openFile",
@@ -708,8 +706,8 @@ export const MessageText = ({
     setFilePreview({ target, machineId: threadMachineId });
   }, [threadMachineId]);
   const markdownInteraction = useMemo<MarkdownInteractionContextValue>(
-    () => ({ threadWorkingDirectory, onFileLinkClick: handleFileLinkClick, onOpenImage }),
-    [handleFileLinkClick, onOpenImage, threadWorkingDirectory]
+    () => ({ onFileLinkOpen: handleFileLinkOpen, onOpenImage }),
+    [handleFileLinkOpen, onOpenImage]
   );
   if (!markdownEnabled || mode === "raw") return <pre>{text}</pre>;
   return (
@@ -727,7 +725,7 @@ export const MessageText = ({
 };
 
 const markdownUrlTransform: UrlTransform = (url, key) => {
-  if (key === "href" && localFileLinkTargetFromHref(url, undefined)) return url;
+  if (key === "href" && localFileLinkTargetFromHref(url)) return url;
   return defaultUrlTransform(url);
 };
 
@@ -896,23 +894,12 @@ const formatByteSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const fileLinkCopyActions = (target: LocalFileLinkTarget) => {
-  const actions = [
-    { key: "relative", label: "Copy relative path", value: target.label },
-    { key: "path", label: "Copy file path", value: target.fullPath },
-    { key: "full", label: "Copy path with line", value: target.title }
-  ];
-  const seen = new Set<string>();
-  return actions.filter((action) => {
-    if (seen.has(action.value)) return false;
-    seen.add(action.value);
-    return true;
-  });
-};
+const fileLinkCopyActions = (target: LocalFileLinkTarget) => [
+  { key: "path", label: "Copy path", value: target.title }
+];
 
 type MarkdownInteractionContextValue = {
-  threadWorkingDirectory?: string;
-  onFileLinkClick: (target: LocalFileLinkTarget, event: React.MouseEvent<HTMLAnchorElement>) => void;
+  onFileLinkOpen: (target: LocalFileLinkTarget) => void;
   onOpenImage?: (image: ImagePreviewState) => void;
 };
 
@@ -922,21 +909,70 @@ const markdownRemarkPlugins = [remarkGfm];
 export const markdownComponents: Components = {
   a: ({ children, href, className, title, ...props }) => {
     const interaction = React.useContext(MarkdownInteractionContext);
-    const fileTarget = localFileLinkTargetFromHref(href, interaction?.threadWorkingDirectory);
+    const fileTarget = localFileLinkTargetFromHref(href);
+    const externalUrl = fileTarget ? null : httpUrlFromValue(href);
     const linkClassName = [className, fileTarget ? "localFileLink" : null].filter(Boolean).join(" ") || undefined;
-    return (
+    const hasMenu = Boolean(externalUrl || (fileTarget && interaction));
+    const openLink = () => {
+      if (fileTarget && interaction) {
+        interaction.onFileLinkOpen(fileTarget);
+      } else if (externalUrl) {
+        if (isVscodeSurface && window.parent !== window) {
+          window.parent.postMessage({ type: "codexhub.openExternal", url: externalUrl }, "*");
+        } else {
+          window.open(externalUrl, "_blank", "noopener,noreferrer");
+        }
+      }
+    };
+    const copyActions = fileTarget ? fileLinkCopyActions(fileTarget)
+      : externalUrl ? [{ key: "url", label: "Copy URL", value: externalUrl }] : [];
+    const anchor = (
       <a
         {...props}
         href={href}
         className={linkClassName}
-        target={fileTarget ? undefined : "_blank"}
-        rel={fileTarget ? undefined : "noreferrer"}
+        target={externalUrl ? "_blank" : undefined}
+        rel={externalUrl ? "noopener noreferrer" : undefined}
         title={fileTarget?.title ?? title}
         aria-label={fileTarget ? `File link ${fileTarget.title}` : props["aria-label"]}
-        onClick={fileTarget && interaction ? (event) => interaction.onFileLinkClick(fileTarget, event) : undefined}
+        aria-haspopup={hasMenu ? "menu" : undefined}
+        onClick={hasMenu ? (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        } : undefined}
+        onAuxClick={hasMenu ? (event) => {
+          if (event.button === 1) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        } : undefined}
       >
-        {fileTarget?.label ?? children}
+        {fileTarget?.title ?? children}
       </a>
+    );
+    if (!hasMenu) return anchor;
+    return (
+      <Dropdown
+        trigger={["hover", "click"]}
+        menu={{
+          items: [
+            ...copyActions.map(({ key, label }) => ({ key, label })),
+            { type: "divider" },
+            { key: "open", label: fileTarget ? "Open file" : "Open link" }
+          ],
+          onClick: ({ key, domEvent }) => {
+            domEvent.stopPropagation();
+            if (key === "open") {
+              openLink();
+              return;
+            }
+            const action = copyActions.find((item) => item.key === key);
+            if (action) void writeTextToClipboard(action.value).catch(() => undefined);
+          }
+        }}
+      >
+        {anchor}
+      </Dropdown>
     );
   },
   img: ({ src, alt, className, title, ...props }) => {
@@ -994,13 +1030,11 @@ type LocalFileLinkTarget = {
   line?: number;
   column?: number;
   fullPath: string;
-  label: string;
   title: string;
 };
 
 const localFileLinkTargetFromHref = (
-  href: string | undefined,
-  threadWorkingDirectory: string | undefined
+  href: string | undefined
 ): LocalFileLinkTarget | null => {
   if (!href) return null;
   const decoded = decodeHref(href.trim());
@@ -1014,8 +1048,7 @@ const localFileLinkTargetFromHref = (
   return {
     ...location,
     fullPath,
-    label: formatFileLocation(displayFilePathForThread(location.path, threadWorkingDirectory), location),
-    title: formatFileLocation(fullPath, location)
+    title: href
   };
 };
 
@@ -1056,42 +1089,7 @@ const splitFileLocation = (value: string): Pick<LocalFileLinkTarget, "path" | "l
 const hasFileLinkSignal = (location: Pick<LocalFileLinkTarget, "path" | "line">) =>
   Boolean(location.line) || /(^|\/)[^/]+\.[^/]+$/.test(normalizePathSeparators(location.path));
 
-const formatFileLocation = (
-  filePath: string,
-  location: Pick<LocalFileLinkTarget, "line" | "column">
-) => [
-  filePath,
-  location.line ? String(location.line) : null,
-  location.column ? String(location.column) : null
-].filter(Boolean).join(":");
-
-const displayFilePathForThread = (filePath: string, threadWorkingDirectory: string | undefined) => {
-  const normalizedPath = normalizePathSeparators(filePath);
-  const normalizedBase = normalizeThreadBasePath(threadWorkingDirectory);
-  if (!normalizedBase) return normalizedPath;
-  const isWindowsPath = /^[a-zA-Z]:\//.test(normalizedPath);
-  const comparablePath = comparableFilePath(normalizedPath, isWindowsPath);
-  const comparableBase = comparableFilePath(normalizedBase, isWindowsPath);
-  if (comparablePath === comparableBase) return ".";
-  const prefix = normalizedBase === "/" ? "/" : `${normalizedBase}/`;
-  const comparablePrefix = comparableBase === "/" ? "/" : `${comparableBase}/`;
-  return comparablePath.startsWith(comparablePrefix)
-    ? normalizedPath.slice(prefix.length)
-    : normalizedPath;
-};
-
-const normalizeThreadBasePath = (value: string | undefined) => {
-  if (!value?.trim()) return "";
-  const normalized = normalizePathSeparators(value.trim());
-  if (normalized === "/") return normalized;
-  if (/^[a-zA-Z]:\/?$/.test(normalized)) return normalized.replace(/\/$/, "");
-  return normalized.replace(/\/+$/, "");
-};
-
 const normalizePathSeparators = (value: string) => value.replace(/\\/g, "/");
-
-const comparableFilePath = (value: string, isWindowsPath: boolean) =>
-  isWindowsPath ? value.toLowerCase() : value;
 
 const orderedActivityStatuses = (statuses: ActivityStatusView[]) => [...statuses]
   .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));

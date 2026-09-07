@@ -40,6 +40,7 @@ import {
 import { loadDotEnv } from "../../../src/core/dotenv.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
+import { httpUrlFromValue } from "../../../src/shared/externalUrl.js";
 import {
   calculateDesktopPetUnionBounds,
   parsePetHitRegions,
@@ -122,7 +123,8 @@ const createWindow = async () => {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    const externalUrl = httpUrlFromValue(url);
+    if (externalUrl) void shell.openExternal(externalUrl);
     return { action: "deny" };
   });
 
