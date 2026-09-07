@@ -5,6 +5,7 @@ import {
   threadMatchesProjectTarget,
   workspaceIncludesProjectTarget
 } from "../../src/web/helpers/surfaceThreadScope.js";
+import { findProjectByWorkspacePath } from "../../src/web/helpers/core.js";
 
 test("selects every project contributed by one surface and excludes another surface", () => {
   const result = projectsForSurface([
@@ -63,4 +64,37 @@ test("project association requires an explicit machine and path target", () => {
     projectA
   ), false);
   assert.equal(threadMatchesProjectTarget(undefined, projectA), false);
+});
+
+test("surface filtering selects the matching source and initial resolution keeps cross-kind paths distinct", () => {
+  const project = {
+    projectId: "project-shared",
+    machineId: "machine-local",
+    path: "/workspace/shared",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastOpenedAt: "2026-01-01T00:00:00.000Z",
+    name: "shared",
+    machineOnline: true,
+    running: false,
+    source: { kind: "electron" as const, groupId: "electron-window", label: "Electron" },
+    sources: [
+      { kind: "electron" as const, groupId: "electron-window", label: "Electron" },
+      { kind: "vscode" as const, groupId: "vscode-window", label: "VS Code" }
+    ]
+  };
+  const vscodeProject = projectsForSurface([project], {
+    kind: "vscode",
+    groupId: "vscode-window",
+    workspacePaths: ["/workspace/shared"]
+  });
+  assert.equal(vscodeProject[0]?.source?.label, "VS Code");
+  assert.equal(vscodeProject[0]?.sources, project.sources);
+  assert.equal(findProjectByWorkspacePath([project], "/workspace/shared", {
+    sourceKind: "vscode",
+    sourceGroupId: "vscode-window"
+  }), project);
+  assert.equal(findProjectByWorkspacePath([project], "/workspace/shared", {
+    sourceKind: "vscode",
+    sourceGroupId: "other-window"
+  }), undefined);
 });

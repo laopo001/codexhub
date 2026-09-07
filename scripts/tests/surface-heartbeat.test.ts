@@ -64,3 +64,23 @@ test("Web surface heartbeat resets its recovery threshold after a success", asyn
   await heartbeat.beat();
   assert.equal(recoveries, 1);
 });
+
+test("Web surface heartbeat retries recovery after a throwing recovery callback", async () => {
+  let recoveries = 0;
+  const heartbeat = createWebClientHeartbeat({
+    send: async () => {
+      throw new Error("lease missing");
+    },
+    requestRecovery: () => {
+      recoveries += 1;
+      throw new Error("host recovery failed");
+    },
+    failuresBeforeRecovery: 2
+  });
+
+  await heartbeat.beat();
+  await heartbeat.beat();
+  await heartbeat.beat();
+  await heartbeat.beat();
+  assert.equal(recoveries, 2);
+});

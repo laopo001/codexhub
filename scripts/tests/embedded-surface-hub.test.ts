@@ -40,14 +40,19 @@ test("embedded surface leases merge workspace projects and retain shared paths",
       snapshots.at(-1)?.map((project) => ({
         path: project.path,
         channel: project.source.vscodeChannel,
-        workspaceFile: project.source.workspaceFile
+        workspaceFile: project.source.workspaceFile,
+        sources: project.sources.map((source) => `${source.kind}:${source.groupId}`)
       })),
       [
-        { path: "/workspace/a", channel: "insiders", workspaceFile: "/workspace/a.code-workspace" },
-        { path: "/workspace/b", channel: "stable", workspaceFile: "/workspace/b.code-workspace" },
-        { path: "/workspace/shared", channel: "insiders", workspaceFile: undefined }
+        { path: "/workspace/a", channel: "insiders", workspaceFile: "/workspace/a.code-workspace", sources: ["vscode:surface-a"] },
+        { path: "/workspace/b", channel: "stable", workspaceFile: "/workspace/b.code-workspace", sources: ["vscode:surface-b"] },
+        { path: "/workspace/shared", channel: "insiders", workspaceFile: undefined, sources: ["vscode:surface-a", "vscode:surface-b"] }
       ]
     );
+    const shared = snapshots.at(-1)?.find((project) => project.path === "/workspace/shared");
+    assert.equal(shared?.source.workspaceFile, undefined);
+    assert.equal(shared?.sources[0]?.workspaceFile, "/workspace/a.code-workspace");
+    assert.notEqual(shared?.source, shared?.sources[0]);
 
     assert.equal(hub.remove("surface-a", "wrong-lease"), false);
     assert.equal(hub.remove("surface-a", "lease-a"), true);
@@ -55,13 +60,54 @@ test("embedded surface leases merge workspace projects and retain shared paths",
       snapshots.at(-1)?.map((project) => ({
         path: project.path,
         channel: project.source.vscodeChannel,
-        workspaceFile: project.source.workspaceFile
+        workspaceFile: project.source.workspaceFile,
+        sources: project.sources.map((source) => `${source.kind}:${source.groupId}`)
       })),
       [
-        { path: "/workspace/b", channel: "stable", workspaceFile: "/workspace/b.code-workspace" },
-        { path: "/workspace/shared", channel: "stable", workspaceFile: "/workspace/b.code-workspace" }
+        { path: "/workspace/b", channel: "stable", workspaceFile: "/workspace/b.code-workspace", sources: ["vscode:surface-b"] },
+        { path: "/workspace/shared", channel: "stable", workspaceFile: "/workspace/b.code-workspace", sources: ["vscode:surface-b"] }
       ]
     );
+  } finally {
+    hub.stop();
+  }
+});
+
+test("one machine path retains VSCode and Electron sources together", () => {
+  const snapshots: EmbeddedSurfaceProject[][] = [];
+  const hub = new EmbeddedSurfaceHub({
+    leaseTimeoutMs: 60_000,
+    onProjectsChange: (projects) => snapshots.push(projects)
+  });
+  try {
+    hub.upsert({
+      surface: "electron",
+      surfaceId: "electron-window",
+      leaseId: "electron-lease",
+      machineId: "machine-local",
+      workspacePaths: ["/workspace/shared"],
+      label: "Electron"
+    });
+    hub.upsert({
+      surface: "vscode",
+      surfaceId: "vscode-window",
+      leaseId: "vscode-lease",
+      machineId: "machine-local",
+      workspacePaths: ["/workspace/shared"],
+      label: "VS Code"
+    });
+
+    assert.deepEqual(snapshots.at(-1)?.map((project) => ({
+      path: project.path,
+      source: `${project.source.kind}:${project.source.groupId}`,
+      sources: project.sources.map((source) => `${source.kind}:${source.groupId}`)
+    })), [{
+      path: "/workspace/shared",
+      source: "electron:electron-window",
+      sources: ["electron:electron-window", "vscode:vscode-window"]
+    }]);
+    assert.equal(hub.remove("electron-window", "electron-lease"), true);
+    assert.deepEqual(snapshots.at(-1)?.[0]?.sources.map((source) => `${source.kind}:${source.groupId}`), ["vscode:vscode-window"]);
   } finally {
     hub.stop();
   }

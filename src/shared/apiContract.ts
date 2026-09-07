@@ -259,6 +259,7 @@ export type TaskView = StoredTask & {
 export type ProjectRecordPayload = StoredProject & {
   transient?: boolean;
   source?: ProjectSource;
+  sources?: ProjectSource[];
 };
 
 /** `/api/projects` 和 projects realtime 事件共享的项目列表 payload。 */

@@ -1,13 +1,12 @@
 import type { ProjectTarget } from "../../shared/petActivityRouting.js";
+import { findProjectSource, type ProjectSource } from "../../shared/projectTypes.js";
 
 /** @deprecated Prefer the canonical shared ProjectTarget; retained as a Web-local compatibility alias. */
 export type SurfaceProjectTarget = ProjectTarget;
 
 export type SurfaceProject = SurfaceProjectTarget & {
-  source?: {
-    kind: "vscode" | "electron";
-    groupId: string;
-  };
+  source?: ProjectSource;
+  sources?: ProjectSource[];
 };
 
 export type SurfaceThreadTarget = {
@@ -45,9 +44,9 @@ export const projectsForSurface = <Project extends SurfaceProject>(
   }
 ) => {
   const workspacePaths = new Set(surface.workspacePaths);
-  return projects.filter((project) =>
-    project.source?.kind === surface.kind
-    && project.source.groupId === surface.groupId
-    && (!workspacePaths.size || workspacePaths.has(project.path))
-  );
+  return projects.flatMap((project) => {
+    const source = findProjectSource(project, surface.kind, surface.groupId);
+    if (!source || (workspacePaths.size && !workspacePaths.has(project.path))) return [];
+    return [{ ...project, source }];
+  });
 };

@@ -33,6 +33,7 @@ import type { SessionSummary, ThreadSummary } from "../shared/threadTypes.js";
 type RuntimeProject = StoredProject & {
   transient?: boolean;
   source?: ProjectSource;
+  sources?: ProjectSource[];
 };
 
 type SessionSnapshot = {
@@ -150,11 +151,12 @@ export class CodexhubServerState {
   replaceTransientProjectsForMachineSource(
     machineId: string,
     sourceKind: ProjectSource["kind"],
-    projects: Array<{ path: string; source: ProjectSource }>
+    projects: Array<{ path: string; source: ProjectSource; sources?: ProjectSource[] }>
   ) {
     let changed = false;
     for (const [projectId, project] of this.transientProjects) {
-      if (project.machineId !== machineId || project.source?.kind !== sourceKind) continue;
+      const sources = project.sources ?? (project.source ? [project.source] : []);
+      if (project.machineId !== machineId || !sources.some((source) => source.kind === sourceKind)) continue;
       this.transientProjects.delete(projectId);
       changed = true;
     }
@@ -162,7 +164,8 @@ export class CodexhubServerState {
       this.upsertTransientProject({
         machineId,
         path: project.path,
-        source: project.source
+        source: project.source,
+        sources: project.sources
       });
       changed = true;
     }
@@ -529,6 +532,7 @@ export class CodexhubServerState {
     now?: string;
     threadId?: string;
     source?: ProjectSource;
+    sources?: ProjectSource[];
   }) {
     const now = input.now ?? new Date().toISOString();
     const normalizedPath = input.path.trim();
@@ -540,6 +544,7 @@ export class CodexhubServerState {
       existing.lastThreadId = input.threadId ?? existing.lastThreadId;
       existing.relation = input.relation ?? existing.relation;
       existing.source = input.source ?? existing.source;
+      existing.sources = input.sources ?? existing.sources;
       return existing;
     }
     const project: RuntimeProject = {
@@ -551,7 +556,8 @@ export class CodexhubServerState {
       lastOpenedAt: now,
       lastThreadId: input.threadId,
       transient: true,
-      source: input.source
+      source: input.source,
+      sources: input.sources
     };
     this.transientProjects.set(projectId, project);
     return project;
@@ -637,7 +643,8 @@ export class CodexhubServerState {
         lastOpenedAt: maxIso(project.lastOpenedAt, overlay.lastOpenedAt),
         lastThreadId: overlay.lastThreadId ?? project.lastThreadId,
         relation: overlay.relation ?? project.relation,
-        source: overlay.source
+        source: overlay.source,
+        sources: overlay.sources
       };
     });
     const storedIds = new Set(stored.map((project) => project.projectId));

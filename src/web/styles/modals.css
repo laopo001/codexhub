@@ -1232,14 +1232,15 @@
 }
 
 .threadPickerHeader {
+  display: grid;
+  gap: 0;
+}
+
+.threadPickerHeaderTop {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-}
-
-.threadPickerHeaderTitle {
-  min-width: 0;
 }
 
 .threadPickerHeaderActions {
@@ -1278,7 +1279,7 @@
 }
 
 .threadPickerPathSelect {
-  width: min(100%, 360px);
+  width: 100%;
   margin-top: 3px;
 }
 

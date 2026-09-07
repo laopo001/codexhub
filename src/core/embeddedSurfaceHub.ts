@@ -5,6 +5,7 @@ export type EmbeddedSurfaceProject = {
   machineId: string;
   path: string;
   source: ProjectSource;
+  sources: ProjectSource[];
 };
 
 export type EmbeddedSurfaceRegistration = {
@@ -128,25 +129,26 @@ export class EmbeddedSurfaceHub {
     const projectsByTarget = new Map<string, EmbeddedSurfaceProject>();
     const surfaces = [...this.surfaces.values()].sort((left, right) => left.surfaceId.localeCompare(right.surfaceId));
     for (const surface of surfaces) {
+      const source = {
+        kind: surface.surface,
+        groupId: surface.surfaceId,
+        label: surface.label,
+        ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {}),
+        ...(surface.workspaceFile ? { workspaceFile: surface.workspaceFile } : {})
+      } satisfies ProjectSource;
       for (const workspacePath of surface.workspacePaths) {
         const key = `${surface.machineId}\0${workspacePath}`;
         const existing = projectsByTarget.get(key);
         if (existing) {
-          if (existing.source.workspaceFile !== surface.workspaceFile) {
-            delete existing.source.workspaceFile;
-          }
+          existing.sources.push({ ...source });
+          if (existing.source.workspaceFile !== surface.workspaceFile) delete existing.source.workspaceFile;
           continue;
         }
         projectsByTarget.set(key, {
           machineId: surface.machineId,
           path: workspacePath,
-          source: {
-            kind: surface.surface,
-            groupId: surface.surfaceId,
-            label: surface.label,
-            ...(surface.vscodeChannel ? { vscodeChannel: surface.vscodeChannel } : {}),
-            ...(surface.workspaceFile ? { workspaceFile: surface.workspaceFile } : {})
-          }
+          source: { ...source },
+          sources: [{ ...source }]
         });
       }
     }

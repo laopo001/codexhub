@@ -671,33 +671,33 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
         }}>
           <section className="threadPickerModal" role="dialog" aria-modal="true" aria-labelledby="threadPickerTitle">
             <header className="threadPickerHeader">
-              <div className="threadPickerHeaderTitle">
+              <div className="threadPickerHeaderTop">
                 <h2 id="threadPickerTitle">Add Thread</h2>
-                <Select
-                  className="threadPickerPathSelect"
-                  value={threadPicker.workingDirectory}
-                  options={threadPickerPathOptions}
-                  onChange={(workingDirectory) => void selectThreadPickerWorkingDirectory(workingDirectory)}
-                  disabled={!threadPickerReady || threadPicker.acting !== null || threadPickerPathOptions.length <= 1}
-                  showSearch
-                  optionFilterProp="label"
-                  aria-label="Thread working directory"
-                  title={threadPicker.workingDirectory}
-                />
+                <div className="threadPickerHeaderActions">
+                  <button
+                    type="button"
+                    className="threadPickerRefreshButton"
+                    onClick={() => {
+                      if (threadPicker.machineId) void loadThreadPickerCandidates(threadPicker.machineId);
+                    }}
+                    disabled={!threadPickerReady || threadPicker.loading || threadPicker.acting !== null}
+                  >
+                    {threadPicker.preparingRuntime ? "Starting" : threadPicker.loading ? "Refreshing" : "Refresh"}
+                  </button>
+                  <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
+                </div>
               </div>
-              <div className="threadPickerHeaderActions">
-                <button
-                  type="button"
-                  className="threadPickerRefreshButton"
-                  onClick={() => {
-                    if (threadPicker.machineId) void loadThreadPickerCandidates(threadPicker.machineId);
-                  }}
-                  disabled={!threadPickerReady || threadPicker.loading || threadPicker.acting !== null}
-                >
-                  {threadPicker.preparingRuntime ? "Starting" : threadPicker.loading ? "Refreshing" : "Refresh"}
-                </button>
-                <button type="button" className="iconButton" onClick={() => setThreadPicker(null)} aria-label="Close">x</button>
-              </div>
+              <Select
+                className="threadPickerPathSelect"
+                value={threadPicker.workingDirectory}
+                options={threadPickerPathOptions}
+                onChange={(workingDirectory) => void selectThreadPickerWorkingDirectory(workingDirectory)}
+                disabled={!threadPickerReady || threadPicker.acting !== null || threadPickerPathOptions.length <= 1}
+                showSearch
+                optionFilterProp="label"
+                aria-label="Thread working directory"
+                title={threadPicker.workingDirectory}
+              />
             </header>
             <div
               className="threadPickerList"

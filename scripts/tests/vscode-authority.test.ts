@@ -78,7 +78,7 @@ test("one embedded authority accepts VSCode and Electron surfaces after runtime 
       surfaceId: "electron-window",
       leaseId: "electron-lease",
       protocolVersion: embeddedSurfaceProtocolVersion,
-      workspacePaths: [],
+      workspacePaths: [workspaceA],
       label: "Codex Hub Electron"
     });
     assert.equal(electron.surface?.machineId, first.surface?.machineId);
@@ -87,6 +87,11 @@ test("one embedded authority accepts VSCode and Electron surfaces after runtime 
     assert.deepEqual(
       projects.projects.filter((project) => project.transient).map((project) => project.path).sort(),
       [workspaceA, workspaceB].sort()
+    );
+    const sharedProject = projects.projects.find((project) => project.path === workspaceA);
+    assert.deepEqual(
+      sharedProject?.sources?.map((source) => `${source.kind}:${source.groupId}`).sort(),
+      ["electron:electron-window", "vscode:window-a"].sort()
     );
 
     const heartbeat = await client.route(apiRoutes.heartbeatWebClient, {

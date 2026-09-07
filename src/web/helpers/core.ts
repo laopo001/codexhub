@@ -11,7 +11,7 @@ import type { AnyApiRoute, ApiRouteCallArgs, ApiRouteResponse } from "../../shar
 export { parseRealtimeMessage } from "../../shared/realtimeClient.js";
 import { defaultTaskTimezone, isCronExpression, nextCronRun } from "../../shared/taskCron.js";
 import { threadGranularApprovalKeys, type ThreadGranularApprovalKey } from "../../shared/usageTypes.js";
-import type { ProjectSource } from "../../shared/projectTypes.js";
+import { findProjectSource, type ProjectSource } from "../../shared/projectTypes.js";
 import type { CodexThreadCandidate, ComposerMode, LocalTask, LocalTaskRun, MachineDirectoryEntry, MachineSummary, ModelSelection, PluginSummary, ProjectMachineGroup, ProjectSummary, ReasoningSelection, ServiceTierSelection, RuntimeSummary, SshConnection, SshHost, TaskDraft, ThreadSummary, ApprovalPolicyDraft, ApprovalsReviewerDraft, PermissionProfileDraft } from "../types.js";
 import { codexHubSearchParams } from "../urlSearch.js";
 import { webSurface } from "../appConfig.js";
@@ -588,14 +588,9 @@ export const findProjectByWorkspacePath = (
   const matches = projects.filter((project) => project.path === normalizedPath);
   if (scope.sourceKind && scope.sourceGroupId) {
     const scopedMatches = matches.filter((project) => {
-      const source = project.source;
-      return Boolean(
-        source
-        && source.kind === scope.sourceKind
-        && source.groupId === scope.sourceGroupId
-      );
+      return Boolean(findProjectSource(project, scope.sourceKind!, scope.sourceGroupId!));
     });
-    if (scopedMatches.length === 1) return scopedMatches[0];
+    return scopedMatches.length === 1 ? scopedMatches[0] : undefined;
   }
   return matches.length === 1 ? matches[0] : undefined;
 };

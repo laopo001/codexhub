@@ -75,6 +75,14 @@ export const parseProjectSource = (value: unknown): ProjectSource | null => {
 export const isProjectSource = (value: unknown): value is ProjectSource =>
   parseProjectSource(value) !== null;
 
+export const findProjectSource = (
+  project: { source?: ProjectSource; sources?: readonly ProjectSource[] },
+  kind: ProjectSource["kind"],
+  groupId: string
+) => (project.sources ?? (project.source ? [project.source] : [])).find((source) =>
+  source.kind === kind && source.groupId === groupId
+);
+
 const projectSourceString = (value: unknown, maxLength: number) => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -177,6 +185,7 @@ export type ProjectSummary = StoredProject & {
   name: string;
   transient?: boolean;
   source?: ProjectSource;
+  sources?: ProjectSource[];
   machine?: MachineSummary | StoredMachine;
   machineOnline: boolean;
   running: boolean;

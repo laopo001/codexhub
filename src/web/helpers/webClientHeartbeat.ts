@@ -9,7 +9,6 @@ export const createWebClientHeartbeat = (options: {
 }): WebClientHeartbeat => {
   let inFlight = false;
   let consecutiveFailures = 0;
-  let recoveryRequested = false;
   const failuresBeforeRecovery = Math.max(1, Math.floor(options.failuresBeforeRecovery ?? 3));
 
   return {
@@ -19,12 +18,15 @@ export const createWebClientHeartbeat = (options: {
       try {
         await options.send();
         consecutiveFailures = 0;
-        recoveryRequested = false;
       } catch {
         consecutiveFailures += 1;
-        if (consecutiveFailures >= failuresBeforeRecovery && !recoveryRequested) {
-          recoveryRequested = true;
-          options.requestRecovery();
+        if (consecutiveFailures >= failuresBeforeRecovery) {
+          consecutiveFailures = 0;
+          try {
+            options.requestRecovery();
+          } catch {
+            // Host recovery failures must not break the heartbeat loop.
+          }
         }
       } finally {
         inFlight = false;

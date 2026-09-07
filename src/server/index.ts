@@ -395,8 +395,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
           machineId,
           sourceKind,
           projects
-            .filter((project) => project.machineId === machineId && project.source.kind === sourceKind)
-            .map((project) => ({ path: project.path, source: project.source }))
+            .filter((project) => project.machineId === machineId && project.sources.some((source) => source.kind === sourceKind))
+            .map((project) => ({ path: project.path, source: project.source, sources: project.sources }))
         );
       }
       publishProjects();
