@@ -88,7 +88,10 @@ export const registerProjectTaskRoutes = (app: FastifyInstance, ctx: ProjectTask
     const reuseProjectThread = input.reuse !== false
       && !projectedThreadCwdMismatch
       && (!worktreeRequiresProjectedThread || Boolean(projectedLastThread));
-    const resumeThreadId = reuseProjectThread && input.machine.type !== "registered"
+    const resumeThreadId = reuseProjectThread && (
+      input.machine.type !== "registered"
+      || ctx.machines.machineTransportRole(input.machine.machineId) === "backend"
+    )
       ? projectedLastThread?.threadId ?? previousProject?.lastThreadId
       : undefined;
     const started = ctx.machines.startSession(input.machine.machineId, {

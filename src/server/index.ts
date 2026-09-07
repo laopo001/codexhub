@@ -52,6 +52,8 @@ import { registerStaticRoutes } from "./serverFiles.js";
 import { registerProjectTaskRoutes } from "./projectTaskRoutes.js";
 import { registerThreadRoutes } from "./threadRoutes.js";
 import { registerMachineTransportRoutes } from "./machineTransportRoutes.js";
+import { RemoteBackendRegistry } from "./remoteBackendRegistry.js";
+import { startParentBackendRegistration, type ParentBackendRegistrationHandle } from "./parentBackendRegistration.js";
 import { registerServerLifecycle } from "./serverLifecycle.js";
 import { registerEmbeddedSurfaceRoutes } from "./vscodeSurfaceRoutes.js";
 import { TunneledSessionManager } from "./tunneledSessionManager.js";
@@ -256,7 +258,11 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     state.parentRegistration(),
     parentRegistrationIdentity
   );
+  if (startupParentRegistration && !features.localMachine) {
+    throw new Error("Parent backend registration requires local machine runtime enabled.");
+  }
   const ntfyNotificationHooks = ntfyNotificationRunnerFromEnv(process.env);
+  const remoteBackend = new RemoteBackendRegistry();
   const authorityService = Boolean(options.authority);
   const embeddedSurface = authorityService || isEmbeddedCodexHubSurface(surface);
   const localProjectCatalog = options.localProjectCatalog ?? (embeddedSurface ? "fixed" : undefined);
@@ -296,6 +302,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     onCatalogChange: () => publishProjects(),
     onThreadEvent: (event, records) => {
       ntfyNotificationHooks?.handleThreadEvent(event, records);
+      parentRegistration?.publishThreadEvent(event);
+      parentRegistration?.publishRuntimeProjection();
     },
     onThreadChange: () => {
       captureSessionState();
@@ -304,7 +312,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     autoGenerateThreadTitle: () => {
       const ui = state.config().ui;
       return ui.autoGenerateThreadTitle;
-    }
+    },
+    remoteBackend
   });
   const app = Fastify({
     logger: {
@@ -353,7 +362,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
   let localMachine: CodexhubMachineHandle | null = null;
-  let parentRegistration: CodexhubMachineHandle | null = null;
+  let parentRegistration: ParentBackendRegistrationHandle | null = null;
+  let parentRegistrationOperation = 0;
   let parentRegistrationStatus: ParentRegistrationStatus = { status: "idle" };
   let restartCoordinator: AuthorityRestartCoordinator | undefined;
   if (authorityService && options.authorityRestart && buildId && options.authority) {
@@ -512,9 +522,9 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   function embeddedParentRegistrationProjects(): MachineRegistrationProject[] {
-    if (!embeddedSurface || !localMachine) return [];
+    if (!localMachine) return [];
     return projectSnapshot().projects
-      .filter((project) => project.machineId === localMachine?.machineId && isEmbeddedWorkspaceSource(project.source))
+      .filter((project) => project.machineId === localMachine?.machineId)
       .map((project) => ({
         path: project.path,
         source: project.source
@@ -522,7 +532,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   }
 
   function parentRegistrationActivities(): MachineActivitySummary[] {
-    return threads.listRuntimes().flatMap((runtime) => runtime.threads.map((thread) => ({
+    return threads.listRuntimes().filter((runtime) => runtime.machineId === localMachine?.machineId).flatMap((runtime) => runtime.threads.map((thread) => ({
       threadId: thread.threadId,
       title: thread.title,
       ...(thread.activityTitle ? { activityTitle: thread.activityTitle } : {}),
@@ -692,13 +702,18 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     input: z.infer<typeof parentRegistrationConnectSchema>,
     registrationOptions: { persist?: boolean } = {}
   ) {
+    const operation = ++parentRegistrationOperation;
+    if (!features.localMachine || !localMachine) {
+      throw new Error("Parent backend registration requires local machine runtime enabled.");
+    }
     const url = normalizeBaseUrl(input.url);
     await assertNotSelfRegistrationTarget(input.url, {
       host: config.host,
       port: config.port,
       serverInstanceId
     });
-    await stopParentRegistration({ forget: false });
+    await stopParentRegistration({ forget: false, operation });
+    if (operation !== parentRegistrationOperation) return parentRegistrationView();
     const storedRegistration = state.parentRegistration();
     const hasExplicitAuthToken = Object.hasOwn(input, "authToken");
     const inputAuthToken = hasExplicitAuthToken
@@ -731,17 +746,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       message: "starting parent registration",
       updatedAt: new Date().toISOString()
     };
-    parentRegistration = startCodexhubMachine({
+    const nextRegistration = startParentBackendRegistration({
       apiBase: url,
       authToken,
       machineId,
-      type: "registered",
       name,
-      autoStartRuntime: options.autoStartRuntime ?? true,
-      appServerLaunch,
-      capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined,
+      localMachineId: localMachine.machineId,
+      threads,
+      machines,
       projects: embeddedParentRegistrationProjects,
-      activitySnapshot: parentRegistrationActivities,
+      activities: parentRegistrationActivities,
+      capabilities: embeddedSurface ? { projectCatalog: "fixed" } : undefined,
+      retainThreadRecordSubscription,
+      releaseThreadRecordSubscription,
       onStatus: (status) => {
         parentRegistrationStatus = {
           status: status.status,
@@ -754,18 +771,38 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
         publishConnections();
       }
     });
+    parentRegistration = nextRegistration;
+    try {
+      await nextRegistration.start();
+    } catch (error) {
+      if (parentRegistration === nextRegistration) parentRegistration = null;
+      await nextRegistration.stop().catch(() => undefined);
+      parentRegistrationStatus = {
+        status: "offline",
+        url,
+        machineId,
+        name,
+        message: error instanceof Error ? error.message : String(error),
+        updatedAt: new Date().toISOString()
+      };
+      publishConnections();
+      throw error;
+    }
     return parentRegistrationView();
   }
 
-  async function stopParentRegistration(options: { forget?: boolean } = {}) {
+  async function stopParentRegistration(options: { forget?: boolean; operation?: number } = {}) {
+    if (options.operation === undefined) parentRegistrationOperation += 1;
     const current = parentRegistration;
-    parentRegistration = null;
+    if (current) parentRegistration = null;
     if (current) await current.stop();
-    if (options.forget) state.clearParentRegistration();
-    parentRegistrationStatus = {
-      status: "idle",
-      updatedAt: new Date().toISOString()
-    };
+    if (parentRegistration === null) {
+      if (options.forget) state.clearParentRegistration();
+      parentRegistrationStatus = {
+        status: "idle",
+        updatedAt: new Date().toISOString()
+      };
+    }
     return parentRegistrationView();
   }
 
@@ -1005,7 +1042,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     state,
     stopTunneledAppServerSession: (sessionId, transportId) => tunneledSessions.stop(sessionId, transportId),
     stopTunneledAppServerSessionsForTransport: (transportId) => tunneledSessions.stopForTransport(transportId),
-    threads
+    threads,
+    remoteBackend
   });
 
   if (staticDirectory) registerStaticRoutes(app, staticDirectory);
@@ -1031,12 +1069,19 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       await startParentRegistration(startupParentRegistration, { persist: false });
     } catch (error) {
       const url = safeNormalizeBaseUrl(startupParentRegistration.url);
+      const message = error instanceof Error ? error.message : String(error);
+      const fatalStartupRegistration = message.includes("Cannot register this CodexHub server to itself.")
+        || message.includes("requires local machine runtime enabled");
+      if (fatalStartupRegistration) {
+        await app.close();
+        throw error;
+      }
       parentRegistrationStatus = {
         status: "offline",
         ...(url ? { url } : {}),
         machineId: startupParentRegistration.machineId,
         name: startupParentRegistration.name,
-        message: error instanceof Error ? error.message : String(error),
+        message,
         updatedAt: new Date().toISOString()
       };
       console.error(`codexhub parent registration startup failed: ${parentRegistrationStatus.message}`);

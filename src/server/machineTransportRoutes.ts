@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { AppServerTunnelPeer, isAppServerTunnelFrame } from "../core/appServerTunnel.js";
+import type { RemoteBackendRegistry } from "./remoteBackendRegistry.js";
 import type { MachineHub } from "../core/machineHub.js";
 import type { CodexhubServerState } from "../core/serverState.js";
 import type { ThreadHub } from "../core/threadHub.js";
@@ -9,6 +10,7 @@ import {
   type MachineTransportIncomingMessage
 } from "../shared/apiContract.js";
 import type { MachineRegistration, MachineRegistrationProject, MachineSummary } from "../shared/machineTypes.js";
+import type { SessionEventInput } from "../shared/threadTypes.js";
 
 type AttachTunneledAppServerInput = {
   machineId: string;
@@ -40,12 +42,15 @@ export type MachineTransportRoutesContext = {
   stopTunneledAppServerSession: (sessionId: string, transportId?: string) => Promise<void>;
   stopTunneledAppServerSessionsForTransport: (transportId: string) => Promise<void>;
   threads: ThreadHub;
+  remoteBackend: RemoteBackendRegistry;
 };
 
 export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: MachineTransportRoutesContext) => {
   app.get("/api/machines/connect", { websocket: true }, (socket) => {
     const transportId = randomUUID();
     let machineId: string | null = null;
+    let transportRole: "machine" | "backend" | null = null;
+    let backendGeneration: string | undefined;
     let commandCursor = 0;
     let closed = false;
     let commandPumpStarted = false;
@@ -125,16 +130,37 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
       cleanedUp = true;
       closed = true;
       tunnel.closeAll();
+      const connectedSessionIds = [...sessionIds];
       disconnectSessions();
-      void ctx.stopTunneledAppServerSessionsForTransport(transportId);
+      if (transportRole === "machine") void ctx.stopTunneledAppServerSessionsForTransport(transportId);
+      for (const sessionId of connectedSessionIds) ctx.remoteBackend.detach(sessionId, transportId);
       if (!machineId) return;
       ctx.machines.disconnectMachine(machineId, transportId);
       ctx.clearMachineRegistrationProjects(machineId);
       ctx.publishProjects();
     };
 
-    const registerMachine = (parsed: Extract<MachineTransportIncomingMessage, { type: "register" }>) => {
-      const result = ctx.machines.registerMachine({ ...parsed.registration, transportId });
+    const registerMachine = (
+      parsed: Extract<MachineTransportIncomingMessage, { type: "register" | "backend_register" }>,
+      role: "machine" | "backend"
+    ) => {
+      if (transportRole && transportRole !== role) {
+        throw new Error(`Machine transport role is already fixed as ${transportRole}.`);
+      }
+      if (transportRole === role) {
+        throw new Error("Machine transport registration can only occur once per connection.");
+      }
+      if (role === "backend" && parsed.registration.type !== "registered") {
+        throw new Error("backend registration must use machine type registered");
+      }
+      transportRole = role;
+      if (role === "backend") {
+        backendGeneration = (parsed as Extract<MachineTransportIncomingMessage, { type: "backend_register" }>).generation;
+      }
+      const registration = role === "backend"
+        ? { ...parsed.registration, transportId, capabilities: { ...parsed.registration.capabilities, projectLauncher: false } }
+        : { ...parsed.registration, transportId };
+      const result = ctx.machines.registerMachine(registration, role);
       ctx.onMachineRegistered?.(result.machine, parsed.registration);
       if (ctx.shouldPersistMachine(result.machine)) {
         ctx.state.upsertMachine({
@@ -148,7 +174,7 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
       }
       ctx.replaceMachineRegistrationProjects(result.machineId, parsed.registration.projects);
       machineId = result.machineId;
-      commandCursor = ctx.machines.clampMachineCommandCursor(machineId, parsed.commandCursor ?? 0);
+      commandCursor = ctx.machines.clampMachineCommandCursor(machineId, parsed.type === "register" ? parsed.commandCursor ?? 0 : parsed.commandCursor ?? 0);
       send({ type: "registered", machineId, machine: result.machine });
       ctx.publishProjects();
       startCommandPump();
@@ -159,12 +185,24 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
         ...parsed.registration,
         sessionId: parsed.sessionId,
         machineId: machineId!,
-        transportId: sessionTransportId(parsed.sessionId)
+        transportId: sessionTransportId(parsed.sessionId),
+        transportRole: transportRole ?? "machine",
+        ...(transportRole === "backend" && backendGeneration ? { remoteGeneration: backendGeneration } : {})
       });
       const sessionId = registered.sessionId;
       sessionIds.add(sessionId);
       sessionCursors.set(sessionId, ctx.threads.clampSessionCommandCursor(sessionId, parsed.commandCursor ?? 0));
       send({ type: "session_registered", sessionId, session: registered.session });
+      if (transportRole === "backend") {
+        if (!backendGeneration) throw new Error("Backend transport generation handshake is missing.");
+        ctx.remoteBackend.attach({
+          sessionId,
+          transportId,
+          generation: backendGeneration,
+          send
+        });
+        ctx.machines.heartbeatMachine(machineId!, { capabilities: { projectLauncher: true } });
+      }
       ctx.refreshRetainedThreadRecordSubscriptions();
       ctx.publishProjects();
       startSessionCommandPump(sessionId);
@@ -173,7 +211,7 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
     const unregisterMachine = async () => {
       ctx.machines.unregisterMachine(machineId!, transportId);
       ctx.clearMachineRegistrationProjects(machineId!);
-      await ctx.stopTunneledAppServerSessionsForTransport(transportId);
+      if (transportRole === "machine") await ctx.stopTunneledAppServerSessionsForTransport(transportId);
       for (const sessionId of [...sessionIds]) {
         ctx.threads.unregisterSession(sessionId, sessionTransportId(sessionId));
       }
@@ -192,14 +230,25 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
         send({ type: "error", message: `invalid machine transport message: ${error instanceof Error ? error.message : String(error)}` });
         return;
       }
-      if (parsed.type !== "register" && !machineId) {
+      if (parsed.type !== "register" && parsed.type !== "backend_register" && !machineId) {
         send({ type: "error", message: "machine transport must register before sending messages" });
         return;
       }
 
       try {
-        if (isAppServerTunnelFrame(parsed)) return tunnel.handleFrame(parsed);
-        if (parsed.type === "register") return registerMachine(parsed);
+        if (isAppServerTunnelFrame(parsed)) {
+          if (transportRole === "backend") throw new Error("backend transport does not accept app-server tunnel frames");
+          return tunnel.handleFrame(parsed);
+        }
+        if (parsed.type === "register") return registerMachine(parsed, "machine");
+        if (parsed.type === "backend_register") return registerMachine(parsed, "backend");
+        if (transportRole === "backend" && (
+          parsed.type === "app_server_ready"
+          || parsed.type === "app_server_start_thread"
+          || parsed.type === "app_server_stopped"
+        )) {
+          throw new Error("backend transport does not accept app-server tunnel lifecycle messages");
+        }
         if (parsed.type === "app_server_ready") {
           const threadId = await ctx.attachTunneledAppServer({
             machineId: machineId!,
@@ -236,7 +285,10 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
         if (parsed.type === "unregister") return await unregisterMachine();
         if (parsed.type === "heartbeat") {
           const registration = parsed.registration ?? {};
-          ctx.machines.heartbeatMachine(machineId!, registration);
+          const heartbeatRegistration = transportRole === "backend"
+            ? { ...registration, capabilities: { ...registration.capabilities, projectLauncher: sessionIds.size > 0 } }
+            : registration;
+          ctx.machines.heartbeatMachine(machineId!, heartbeatRegistration);
           if (Object.hasOwn(registration, "projects")) {
             ctx.replaceMachineRegistrationProjects(machineId!, registration.projects);
           }
@@ -246,22 +298,44 @@ export const registerMachineTransportRoutes = (app: FastifyInstance, ctx: Machin
         if (parsed.type === "session_register") return registerSession(parsed);
         if (parsed.type === "session_unregister") {
           ctx.threads.unregisterSession(parsed.sessionId, sessionTransportId(parsed.sessionId));
+          if (transportRole === "backend") ctx.remoteBackend.dispose(parsed.sessionId);
           sessionIds.delete(parsed.sessionId);
           sessionCursors.delete(parsed.sessionId);
+          if (transportRole === "backend") ctx.machines.heartbeatMachine(machineId!, { capabilities: { projectLauncher: sessionIds.size > 0 } });
           ctx.publishProjects();
           return;
         }
         if (parsed.type === "session_heartbeat") {
-          ctx.threads.heartbeatSession(parsed.sessionId, parsed.registration ?? {});
+          ctx.threads.heartbeatSession(parsed.sessionId, parsed.registration ?? {}, sessionTransportId(parsed.sessionId));
           return;
         }
-        if (parsed.type === "session_event") return ctx.threads.applySessionEvent(parsed.sessionId, parsed.event);
+        if (parsed.type === "session_event") {
+          if (transportRole === "backend" && parsed.event.type !== "runtime_projection" && parsed.event.type !== "thread_projection") {
+            throw new Error("backend transport only accepts CodexHub projection events");
+          }
+          if (transportRole === "machine" && (parsed.event.type === "runtime_projection" || parsed.event.type === "thread_projection")) {
+            throw new Error("standalone machine transport cannot send backend projection events");
+          }
+          return ctx.threads.applySessionEvent(parsed.sessionId, parsed.event as SessionEventInput, sessionTransportId(parsed.sessionId));
+        }
+        if (parsed.type === "backend_command_result") {
+          ctx.remoteBackend.resolve(parsed.sessionId, transportId, parsed.generation, parsed.commandId, parsed.result);
+          return;
+        }
+        if (parsed.type === "backend_command_error") {
+          ctx.remoteBackend.reject(parsed.sessionId, transportId, parsed.generation, parsed.commandId, parsed.message);
+          return;
+        }
+        if (parsed.type === "backend_command_done") {
+          ctx.remoteBackend.complete(parsed.sessionId, transportId, parsed.generation, parsed.commandId, parsed.message);
+          return;
+        }
         if (parsed.type === "session_command_result") {
-          ctx.threads.resolveSessionCommand(parsed.sessionId, parsed.commandId, parsed.result);
+          ctx.threads.resolveSessionCommand(parsed.sessionId, parsed.commandId, parsed.result, sessionTransportId(parsed.sessionId));
           return;
         }
         if (parsed.type === "session_command_error") {
-          ctx.threads.failSessionCommand(parsed.sessionId, parsed.commandId, parsed.message);
+          ctx.threads.failSessionCommand(parsed.sessionId, parsed.commandId, parsed.message, sessionTransportId(parsed.sessionId));
           return;
         }
         if (parsed.type === "command_result") {

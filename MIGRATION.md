@@ -1,3 +1,13 @@
+# 后端注册迁移（未发布）
+
+新增 `codexhub register --to <parent>`：向已有本机后端提交注册配置后退出。全局 `--server` 指定本机后端；`--to` 指定父机。后端未启动时不会自动启动服务。`server --register-to` 保留为启动并注册的快捷入口，Web 注册面板使用相同后端路径。
+
+后端注册现在复用子机 local runtime，父机通过 CodexHub 命令和事件访问子机，子机本地 UI 和父机操作进入同一执行管理路径。它不再为父机另起 app server。子机必须启用 local machine；父连接断开或取消注册不会停止子机 runtime。
+
+升级父子两端后再启用后端注册，并通过原有 thread picker 显式恢复需要的历史 thread；不迁移持久 transcript，不合并父子 project/config/task 数据，也不自动接管旧运行进程。独立 `machine --type registered`、remote-client bootstrap 和 SSH 继续使用原模式。
+
+`register` 使用 `CODEX_HUB_AUTH_TOKEN` 访问本机后端；父机认证由 `--auth-token`、`CODEX_HUB_REGISTER_AUTH_TOKEN` 或 Register URL 提供，两者不要混用。`register` 和 GUI 保存注册配置，`server --register-to` 仍保留启动时 override 语义。
+
 # CodexHub 0.8.0 迁移说明
 
 CodexHub 0.8.0 在 0.7.0 的共享 authority 基础上，增加了 VSCode/Electron 对本机 Node.js 和本机 npm/link CodexHub 包的优先解析。这样更新 Node.js 或通过源码构建、`pnpm link --global` 更新 CodexHub 后，embedded authority 可以直接使用本地版本，不必等待 VSIX 或 Electron 内置 bundle 更新。

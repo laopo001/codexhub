@@ -395,6 +395,7 @@ export type SessionCommand = {
     | "suggest_thread_title"
     | "generate_commit_message"
     | "stop"
+    | "cancel_queued_turn"
     | "terminate_background_terminal"
     | "list_threads"
     | "list_models"
@@ -413,6 +414,8 @@ export type SessionCommand = {
   createdAt: string;
   threadId?: string;
   input?: ProxyInput;
+  source?: "web" | "telegram" | "task";
+  submissionId?: string;
   turnId?: string;
   processId?: string;
   lastTurnId?: string;
@@ -567,4 +570,19 @@ export type SessionEventInput =
       type: "account_rate_limits_updated";
       rateLimits: unknown;
       heartbeat?: boolean;
+    }
+  | {
+      type: "runtime_projection";
+      runtime: RuntimeSummary;
+      threads: ThreadSummary[];
+      generation: string;
+      relaySeq: number;
+      heartbeat?: false;
+    }
+  | {
+      type: "thread_projection";
+      event: ThreadStreamEvent;
+      generation: string;
+      relaySeq: number;
+      heartbeat?: false;
     };

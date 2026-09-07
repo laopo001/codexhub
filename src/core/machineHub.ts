@@ -26,6 +26,7 @@ type MachineCommandInput =
 
 type MachineState = MachineSummary & {
   transportId?: string;
+  transportRole: "machine" | "backend";
   commands: MachineCommand[];
   waiters: Set<MachineWaiter>;
 };
@@ -46,7 +47,7 @@ export class MachineHub {
 
   constructor(private readonly options: { onChange?: () => void } = {}) {}
 
-  registerMachine(registration: MachineRegistration): { machineId: string; machine: MachineSummary } {
+  registerMachine(registration: MachineRegistration, transportRole: "machine" | "backend" = "machine"): { machineId: string; machine: MachineSummary } {
     const now = new Date().toISOString();
     const machineId = registration.machineId?.trim() || createMachineId(registration.hostname);
     const existing = this.machines.get(machineId);
@@ -67,12 +68,17 @@ export class MachineHub {
       capabilities: normalizeMachineCapabilities(registration.capabilities, existing?.capabilities),
       activities: registration.activities ?? existing?.activities ?? [],
       transportId: registration.transportId,
+      transportRole,
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
     };
     this.machines.set(machineId, machine);
     this.options.onChange?.();
     return { machineId, machine: machineSummary(machine) };
+  }
+
+  machineTransportRole(machineId: string) {
+    return this.machines.get(machineId)?.transportRole;
   }
 
   heartbeatMachine(machineId: string, registration: Partial<MachineRegistration> = {}) {

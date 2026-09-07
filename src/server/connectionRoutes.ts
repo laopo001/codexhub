@@ -82,9 +82,20 @@ export const registerConnectionRoutes = (app: FastifyInstance, ctx: ConnectionRo
   app.get("/api/registered/parent", async () => ({
     registration: ctx.parentRegistrationView()
   } satisfies ParentRegistrationPayload));
-  app.post("/api/registered/parent", async (request) => ({
-    registration: await ctx.startParentRegistration(parentRegistrationConnectSchema.parse(request.body))
-  } satisfies ParentRegistrationPayload));
+  app.post("/api/registered/parent", async (request, reply) => {
+    try {
+      return {
+        registration: await ctx.startParentRegistration(parentRegistrationConnectSchema.parse(request.body))
+      } satisfies ParentRegistrationPayload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("requires local machine runtime")) {
+        reply.code(409);
+        return { error: message };
+      }
+      throw error;
+    }
+  });
   app.delete("/api/registered/parent", async () => ({
     registration: await ctx.stopParentRegistration()
   } satisfies ParentRegistrationPayload));

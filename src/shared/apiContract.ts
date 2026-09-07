@@ -771,6 +771,84 @@ export const sessionRegistrationSchema = z.object({
 
 export const sessionHeartbeatSchema = sessionRegistrationSchema.partial().strict();
 
+const threadProjectionRuntimeSchema = z.object({
+  machineId: z.string().min(1),
+  name: z.string().min(1).optional(),
+  online: z.boolean(),
+  runnable: z.boolean(),
+  lastSeenAt: z.string().min(1).optional()
+}).strict();
+
+const threadProjectionSummarySchema = z.object({
+  threadId: z.string().min(1),
+  workingDirectory: z.string().min(1),
+  model: z.string().optional(),
+  modelReasoningEffort: modelReasoningEffortSchema.optional(),
+  serviceTier: z.string().optional(),
+  approvalPolicy: z.unknown().optional(),
+  approvalsReviewer: z.string().optional(),
+  permissions: z.string().optional(),
+  activePermissionProfile: z.unknown().nullable().optional(),
+  sandboxPolicy: z.unknown().optional(),
+  runtime: threadProjectionRuntimeSchema,
+  status: z.enum(["waiting", "running", "idle"]),
+  running: z.boolean(),
+  activeTurnId: z.string().optional(),
+  activeTurnStartedAt: z.string().optional(),
+  activePlanProgress: z.object({ currentStep: z.number().int().positive(), totalSteps: z.number().int().positive() }).strict().optional(),
+  title: z.string(),
+  activityTitle: z.string().optional(),
+  latestAgentMessage: z.string().optional(),
+  updatedAt: z.string().min(1),
+  messageCount: z.number().int().nonnegative(),
+  lastUsage: z.unknown().optional(),
+  threadUsage: z.unknown()
+}).strict();
+
+const runtimeProjectionSchema = z.object({
+  machineId: z.string().min(1),
+  name: z.string().min(1).optional(),
+  workingDirectory: z.string().min(1),
+  online: z.boolean(),
+  status: z.enum(["online", "offline"]),
+  createdAt: z.string().min(1).optional(),
+  lastSeenAt: z.string().min(1),
+  offlineSinceAt: z.string().min(1).optional(),
+  offlineReason: z.enum(["heartbeat_timeout", "transport_disconnected", "unregistered"]).optional(),
+  pid: z.number().int().optional(),
+  hostname: z.string().min(1).optional(),
+  cliVersion: z.string().min(1).optional(),
+  accountRateLimits: z.unknown().nullable().optional(),
+  threads: z.array(threadProjectionSummarySchema)
+}).strict();
+
+const threadProjectionSnapshotSchema = z.object({
+  snapshotId: z.string().min(1),
+  page: z.number().int().nonnegative(),
+  reset: z.boolean(),
+  complete: z.boolean(),
+  history: z.object({
+    hasOlder: z.boolean(),
+    oldestRecordId: z.string().optional(),
+    newestRecordId: z.string().optional(),
+    loadedRecordCount: z.number().int().nonnegative()
+  }).strict().optional()
+}).strict();
+
+const threadProjectionEventSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  threadId: z.string().min(1),
+  kind: z.enum(["thread", "record", "record_delta", "done"]),
+  historical: z.boolean().optional(),
+  thread: threadProjectionSummarySchema,
+  record: z.unknown().optional(),
+  records: z.array(z.unknown()).optional(),
+  delta: z.object({ recordId: z.string().min(1), field: z.literal("aggregated_output"), append: z.string() }).strict().optional(),
+  backgroundTerminals: z.unknown().optional(),
+  queue: z.array(z.unknown()).optional(),
+  snapshot: threadProjectionSnapshotSchema.optional()
+}).strict();
+
 export const sessionEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("thread_event"),
@@ -830,6 +908,21 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     heartbeat: z.boolean().optional()
   }),
   z.object({
+    type: z.literal("runtime_projection"),
+    runtime: runtimeProjectionSchema,
+    threads: z.array(threadProjectionSummarySchema),
+    generation: z.string().min(1),
+    relaySeq: z.number().int().positive(),
+    heartbeat: z.literal(false).optional()
+  }).strict(),
+  z.object({
+    type: z.literal("thread_projection"),
+    event: threadProjectionEventSchema,
+    generation: z.string().min(1),
+    relaySeq: z.number().int().positive(),
+    heartbeat: z.literal(false).optional()
+  }),
+  z.object({
     type: z.literal("approval_request"),
     threadId: z.string().min(1),
     approval: appServerApprovalRequestSchema,
@@ -879,7 +972,7 @@ export const machineHeartbeatSchema = machineRegistrationSchema.partial().strict
 
 export const machineEnsureRuntimeResultSchema = z.object({
   sessionId: z.string().min(1),
-  appServerUrl: z.string().min(1),
+  appServerUrl: z.string().min(1).optional(),
   cwd: z.string().min(1),
   reused: z.boolean().optional()
 });
@@ -887,7 +980,7 @@ export const machineEnsureRuntimeResultSchema = z.object({
 export const machineStartSessionResultSchema = z.object({
   sessionId: z.string().min(1),
   threadId: z.string().min(1),
-  appServerUrl: z.string().min(1),
+  appServerUrl: z.string().min(1).optional(),
   cwd: z.string().min(1),
   reused: z.boolean().optional()
 });
@@ -999,7 +1092,86 @@ export const parentRegistrationConnectSchema = z.object({
   name: z.string().min(1).optional()
 }).strict();
 
+const remoteBackendCommandTypeSchema = z.enum([
+  "fork_thread", "turn", "steer", "set_goal", "clear_goal", "compact_thread", "review_thread",
+  "rename_thread", "suggest_thread_title", "generate_commit_message", "stop", "cancel_queued_turn",
+  "terminate_background_terminal", "list_threads", "list_models", "list_permission_profiles",
+  "list_command_palette", "list_apps", "reconcile_plugins", "load_thread_history", "start_thread",
+  "resume_thread", "subscribe_thread_records", "unsubscribe_thread_records", "approval_decision",
+  "user_input_response"
+]);
+
+/** CodexHub semantic command envelope used by backend transports; raw app-server frames are excluded. */
+export const remoteBackendCommandSchema = z.object({
+  commandId: z.string().min(1),
+  type: remoteBackendCommandTypeSchema,
+  workingDirectory: z.string().min(1),
+  createdAt: z.string().min(1),
+  threadId: z.string().min(1).optional(),
+  input: inputSchema.optional(),
+  source: z.enum(["web", "telegram", "task"]).optional(),
+  submissionId: z.string().min(1).optional(),
+  turnId: z.string().min(1).optional(),
+  processId: z.string().min(1).optional(),
+  lastTurnId: z.string().min(1).optional(),
+  approvalId: z.string().min(1).optional(),
+  approvalDecision: appServerApprovalDecisionSchema.optional(),
+  userInputId: z.string().min(1).optional(),
+  userInputAnswers: z.record(z.string(), z.object({ answers: z.array(z.string()) }).strict()).optional(),
+  limit: z.number().int().positive().optional(),
+  includeHidden: z.boolean().optional(),
+  refresh: z.boolean().optional(),
+  commandPalettePart: z.enum(["core", "plugins", "all"]).optional(),
+  title: z.string().min(1).optional(),
+  commitMessageHint: z.string().optional(),
+  commitMessagePrompt: z.string().optional(),
+  goal: threadGoalUpdateSchema.optional(),
+  reviewTarget: z.object({ type: z.literal("uncommittedChanges") }).strict().optional(),
+  options: threadRunOptionsSchema.optional(),
+  creationOptions: z.object({ developerInstructions: z.string().optional() }).strict().optional(),
+  historySnapshotId: z.string().min(1).optional(),
+  historyPage: z.number().int().nonnegative().optional()
+}).strict().superRefine((command, context) => {
+  const needsThread = new Set([
+    "fork_thread", "turn", "steer", "set_goal", "clear_goal", "compact_thread", "review_thread",
+    "rename_thread", "suggest_thread_title", "stop", "cancel_queued_turn", "terminate_background_terminal",
+    "approval_decision", "user_input_response", "subscribe_thread_records", "unsubscribe_thread_records",
+    "load_thread_history", "resume_thread"
+  ]);
+  if (needsThread.has(command.type) && !command.threadId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["threadId"], message: `${command.type} requires threadId` });
+  }
+  if ((command.type === "turn" || command.type === "steer") && command.input === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["input"], message: `${command.type} requires input` });
+  }
+  if (command.type === "rename_thread" && !command.title) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["title"], message: "rename_thread requires title" });
+  }
+  if (command.type === "cancel_queued_turn" && !command.submissionId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["submissionId"], message: "cancel_queued_turn requires submissionId" });
+  }
+  if (command.type === "terminate_background_terminal" && !command.processId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["processId"], message: "terminate_background_terminal requires processId" });
+  }
+  if (command.type === "approval_decision" && (!command.approvalId || command.approvalDecision === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["approvalDecision"], message: "approval_decision requires approvalId and approvalDecision" });
+  }
+  if (command.type === "user_input_response" && (!command.userInputId || !command.userInputAnswers)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["userInputAnswers"], message: "user_input_response requires userInputId and userInputAnswers" });
+  }
+  if (command.type === "generate_commit_message" && typeof command.input !== "string") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["input"], message: "generate_commit_message requires string input" });
+  }
+});
+
 export const machineTransportMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("backend_register"),
+    protocolVersion: z.literal(1),
+    generation: z.string().min(1),
+    commandCursor: z.number().int().min(0).optional(),
+    registration: machineRegistrationSchema
+  }),
   z.object({
     type: z.literal("register"),
     commandCursor: z.number().int().min(0).optional(),
@@ -1061,6 +1233,27 @@ export const machineTransportMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     commandId: z.string().min(1),
     message: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("backend_command_result"),
+    sessionId: z.string().min(1),
+    commandId: z.string().min(1),
+    generation: z.string().min(1),
+    result: z.unknown()
+  }),
+  z.object({
+    type: z.literal("backend_command_error"),
+    sessionId: z.string().min(1),
+    commandId: z.string().min(1),
+    generation: z.string().min(1),
+    message: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("backend_command_done"),
+    sessionId: z.string().min(1),
+    commandId: z.string().min(1),
+    generation: z.string().min(1),
+    message: z.string().min(1).optional()
   }),
   z.object({
     type: z.literal("app_server_ready"),

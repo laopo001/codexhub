@@ -89,7 +89,7 @@ export type MachineSummary = {
 /** machine 确保唯一 Codex runtime 已启动后的内部结果。 */
 export type MachineEnsureRuntimeResult = {
   sessionId: string;
-  appServerUrl: string;
+  appServerUrl?: string;
   cwd: string;
   reused?: boolean;
 };
@@ -98,7 +98,7 @@ export type MachineEnsureRuntimeResult = {
 export type MachineStartSessionResult = {
   sessionId: string;
   threadId: string;
-  appServerUrl: string;
+  appServerUrl?: string;
   cwd: string;
   reused?: boolean;
 };

@@ -507,7 +507,10 @@ export const registerThreadRoutes = <
         payload.submissionId
       );
       delivery = dispatch.delivery;
-      if (!dispatch.accepted || dispatch.delivery === "goal") {
+      if (dispatch.deliveryAcknowledgement) {
+        await dispatch.deliveryAcknowledgement;
+        delivery = dispatch.delivery;
+      } else if (!dispatch.accepted || dispatch.delivery === "goal") {
         await dispatch.completion;
       } else {
         void dispatch.completion.catch(() => undefined);
@@ -531,7 +534,7 @@ export const registerThreadRoutes = <
       submissionId: z.string().min(1).max(160)
     }).parse(request.params);
     try {
-      const cancelled = ctx.threads.cancelQueuedTurn(params.threadId, params.submissionId);
+      const cancelled = await ctx.threads.cancelQueuedTurn(params.threadId, params.submissionId);
       return { cancelled: true, submissionId: cancelled.submissionId } satisfies ThreadQueueCancelPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -621,7 +624,7 @@ export const registerThreadRoutes = <
     const payload = threadApprovalDecisionSchema.parse(request.body);
     try {
       const result = await ctx.threads.respondToApproval(params.threadId, payload.approvalId, payload.decision);
-      return { ok: true, ...result } satisfies ThreadApprovalPayload;
+      return { ok: true, ...(result as Record<string, unknown>) } satisfies ThreadApprovalPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") || message.startsWith("Approval not found:") ? 404 : 409);
@@ -634,7 +637,7 @@ export const registerThreadRoutes = <
     const payload = threadUserInputResponseSchema.parse(request.body);
     try {
       const result = await ctx.threads.respondToUserInput(params.threadId, payload.userInputId, payload.answers);
-      return { ok: true, ...result } satisfies ThreadUserInputPayload;
+      return { ok: true, ...(result as Record<string, unknown>) } satisfies ThreadUserInputPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") || message.startsWith("User input not found:") ? 404 : 409);

@@ -8,18 +8,23 @@ import type {
   ThreadBackgroundTerminals,
   ThreadQueueItem,
   ThreadRunOptions,
+  ThreadSummary,
   ThreadStreamEvent
 } from "../shared/threadTypes.js";
 
 export type InternalSessionRegistration = SessionRegistration & {
   sessionId?: string;
   transportId?: string;
+  transportRole?: "machine" | "backend";
+  remoteGeneration?: string;
 };
 
 export type SessionCommandWaiter = () => void;
 
 export type SessionState = SessionSummary & {
   transportId?: string;
+  transportRole: "machine" | "backend";
+  remoteGeneration?: string;
   commands: SessionCommand[];
   waiters: Set<SessionCommandWaiter>;
 };
@@ -41,6 +46,7 @@ export type ThreadState = {
   threadUsage: ThreadUsage;
   subscribers: Set<(event: ThreadStreamEvent) => void>;
   lastUsage?: Usage;
+  remoteSummary?: Pick<ThreadSummary, "activeTurnStartedAt" | "activePlanProgress" | "activityTitle" | "latestAgentMessage" | "messageCount">;
   seq: number;
 };
 

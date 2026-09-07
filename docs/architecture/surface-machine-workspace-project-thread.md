@@ -48,6 +48,12 @@ Authority 是当前执行环境内的 CodexHub server/control plane。它拥有 
 投影、project catalog、task/config 和 embedded surface leases。Windows、每个 WSL distro、Remote
 SSH host/user 和容器是不同 authority，不应合并 identity。
 
+后端向父机注册时，仅导出本机 local machine 的执行能力。子机后端拥有本机 runtime 的生命周期，
+父机与子机本地 UI 的请求都由子机后端执行；父机持有远程展示投影，不为这条连接另建 app-server
+协议客户端。取消注册或父机失联不停止子机 runtime。双方 machine identity 在注册边界映射，
+project identity 仍分别使用所属 authority 的 `machineId + path`；不导入子机其它远端 machines、
+tasks/config，不合并 authority。thread transcript 的最终来源仍然是官方 app server。
+
 ### Machine
 
 Machine 是路径解析、目录/文件读取和 Codex app-server 执行的边界。

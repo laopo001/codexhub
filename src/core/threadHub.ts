@@ -24,6 +24,7 @@ import {
   waitForSessionCommands
 } from "./sessionCommandQueue.js";
 import { summarizeProxyInput, type ProxyInput } from "../shared/inputTypes.js";
+import type { RemoteBackendCommand, RemoteBackendExecutor } from "./remoteBackend.js";
 import { planProgressFromPlan, planProgressSummary } from "../shared/planProgress.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
@@ -93,6 +94,7 @@ import type {
   RuntimeStreamEvent,
   RuntimeSummary,
   ThreadCreationOptions,
+  ThreadBackgroundTerminals,
   ThreadDetail,
   ThreadHistoryPageInfo,
   ThreadQueueItem,
@@ -112,6 +114,7 @@ export type ThreadTurnDispatch = {
   delivery: ThreadTurnDelivery;
   accepted: boolean;
   completion: Promise<void>;
+  deliveryAcknowledgement?: Promise<void>;
 };
 
 type ThreadRecordIndex = {
@@ -125,6 +128,8 @@ type ThreadHistorySnapshotState = {
   snapshotId: string;
   nextPage: number;
   complete: boolean;
+  hasOlder?: boolean;
+  loadedRecordCount?: number;
 };
 
 export class ThreadHub {
@@ -148,6 +153,9 @@ export class ThreadHub {
   private readonly historyPageLoads = new Map<string, Promise<SessionHistoryPageResult>>();
   private readonly runtimeEvents: RuntimeStreamEvent[] = [];
   private readonly runtimeSubscribers = new Set<(event: RuntimeStreamEvent) => void>();
+  private readonly remoteProjectionGenerations = new Map<string, string>();
+  private readonly remoteProjectionRelaySeq = new Map<string, number>();
+  private readonly remoteQueues = new Map<string, ThreadQueueItem[]>();
   private readonly autoNamingThreadIds = new Set<string>();
   private lastRuntimeSnapshotKey = "";
   private runtimeSeq = 0;
@@ -159,6 +167,7 @@ export class ThreadHub {
       onThreadChange?: () => void;
       onThreadEvent?: (event: ThreadStreamEvent, records: CodexRecord[]) => void;
       autoGenerateThreadTitle?: () => boolean;
+      remoteBackend?: RemoteBackendExecutor;
     } = {}
   ) {}
 
@@ -200,6 +209,8 @@ export class ThreadHub {
       accountRateLimits: existing?.accountRateLimits ?? null,
       threads: [],
       transportId: registration.transportId,
+      transportRole: registration.transportRole ?? "machine",
+      remoteGeneration: registration.remoteGeneration,
       commands: existing?.commands ?? [],
       waiters: existing?.waiters ?? new Set()
     };
@@ -220,9 +231,10 @@ export class ThreadHub {
     return { sessionId, session: this.sessionSummary(session) };
   }
 
-  heartbeatSession(sessionId: string, registration: Partial<SessionRegistration> = {}) {
+  heartbeatSession(sessionId: string, registration: Partial<SessionRegistration> = {}, transportId?: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false };
+    if (transportId && session.transportId !== transportId) return { ok: false };
     const previousState = this.sessionVisibleState(session);
     const previousMachineId = session.machineId;
     const now = new Date().toISOString();
@@ -267,9 +279,10 @@ export class ThreadHub {
     return { ok: true, sessionId };
   }
 
-  failSessionCommand(sessionId: string, commandId: string, message: string) {
+  failSessionCommand(sessionId: string, commandId: string, message: string, transportId?: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false };
+    if (transportId && session.transportId !== transportId) return { ok: false };
     const pending = this.pendingCommands.get(commandId);
     const error = new Error(message || `Session command failed: ${commandId}`);
     if (!pending?.threadId) {
@@ -298,9 +311,10 @@ export class ThreadHub {
     return { ok: true, sessionId, commandId };
   }
 
-  resolveSessionCommand(sessionId: string, commandId: string, result: unknown) {
+  resolveSessionCommand(sessionId: string, commandId: string, result: unknown, transportId?: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false };
+    if (transportId && session.transportId !== transportId) return { ok: false };
     const pending = this.pendingCommands.get(commandId);
     if (!pending) return { ok: false };
     if (pending.type === "start_thread" || pending.type === "resume_thread") {
@@ -383,9 +397,19 @@ export class ThreadHub {
     return clampCommandCursor(this.sessions.get(sessionId), requestedCursor);
   }
 
-  applySessionEvent(sessionId: string, input: SessionEventInput) {
-    if (input.heartbeat !== false) this.heartbeatSession(sessionId);
+  applySessionEvent(sessionId: string, input: SessionEventInput, transportId?: string) {
+    if (input.heartbeat !== false) this.heartbeatSession(sessionId, {}, transportId);
     const session = this.requireSession(sessionId);
+    if (transportId && session.transportId !== transportId) return { ok: false };
+    if (input.type === "runtime_projection") {
+      this.applyRemoteRuntimeProjection(session, input);
+      return { ok: true, session: this.sessionSummary(session) };
+    }
+    if (input.type === "thread_projection") {
+      this.applyRemoteThreadProjection(session, input);
+      const thread = this.threads.get(input.event.threadId);
+      return { ok: true, ...(thread ? { thread: this.summary(thread) } : {}) };
+    }
     if (input.type === "account_rate_limits_updated") {
       const rateLimits = mergeAppServerThreadRateLimits(
         session.accountRateLimits,
@@ -506,6 +530,258 @@ export class ThreadHub {
     return { ok: true, thread: thread ? this.summary(thread) : undefined };
   }
 
+  private applyRemoteRuntimeProjection(
+    session: SessionState,
+    input: Extract<SessionEventInput, { type: "runtime_projection" }>
+  ) {
+    if (input.runtime.machineId !== session.machineId) throw new Error(`Remote runtime machine mismatch: ${input.runtime.machineId}`);
+    if (!this.acceptRemoteProjectionSeq(session.sessionId, input.generation, input.relaySeq)) return;
+    session.workingDirectory = input.runtime.workingDirectory;
+    session.name = input.runtime.name ?? session.name;
+    session.online = input.runtime.online;
+    session.status = input.runtime.status;
+    session.createdAt = input.runtime.createdAt;
+    session.lastSeenAt = input.runtime.lastSeenAt;
+    session.offlineSinceAt = input.runtime.offlineSinceAt;
+    session.offlineReason = input.runtime.offlineReason;
+    session.pid = input.runtime.pid;
+    session.hostname = input.runtime.hostname;
+    session.cliVersion = input.runtime.cliVersion;
+    session.accountRateLimits = input.runtime.accountRateLimits ?? null;
+    for (const summary of input.threads) {
+      const thread = this.ensureThread(summary.threadId, session, {
+        params: { threadId: summary.threadId, cwd: summary.workingDirectory }
+      });
+      this.applyRemoteThreadSummary(thread, summary);
+    }
+    this.publishThreadCatalog();
+  }
+
+  private applyRemoteThreadProjection(
+    session: SessionState,
+    input: Extract<SessionEventInput, { type: "thread_projection" }>
+  ) {
+    const event = input.event;
+    if (event.thread.runtime.machineId !== session.machineId) {
+      throw new Error(`Remote thread machine mismatch: ${event.thread.runtime.machineId}`);
+    }
+    if (!this.acceptRemoteProjectionSeq(session.sessionId, input.generation, input.relaySeq)) return;
+    const thread = this.ensureThread(event.threadId, session, {
+      params: { threadId: event.threadId, cwd: event.thread.workingDirectory }
+    });
+    this.applyRemoteThreadSummary(thread, event.thread);
+    if (event.queue) this.remoteQueues.set(thread.threadId, event.queue);
+    if (event.backgroundTerminals) thread.backgroundTerminals = event.backgroundTerminals;
+    if (event.snapshot) {
+      if (event.snapshot.reset) {
+        thread.records = [];
+        thread.recordSeq = 0;
+        thread.lastUsage = undefined;
+        thread.threadUsage = emptyThreadUsage();
+        this.invalidateThreadRecordIndex(thread);
+      }
+      this.historySnapshots.set(thread, {
+        snapshotId: event.snapshot.snapshotId,
+        nextPage: event.snapshot.page + 1,
+        complete: event.snapshot.complete && event.snapshot.history?.hasOlder !== true,
+        hasOlder: event.snapshot.history?.hasOlder,
+        loadedRecordCount: event.snapshot.history?.loadedRecordCount
+      });
+    }
+    const records = event.records ?? (event.record ? [event.record] : []);
+    for (const record of records) this.upsertRecord(thread, record, { historical: event.historical, publish: false });
+    if (event.delta) {
+      const target = thread.records.find((record) => record.id === event.delta!.recordId);
+      const payload = target && asRecord(target.payload);
+      if (target && payload && typeof payload.aggregated_output === "string") {
+        this.upsertRecord(thread, {
+          ...target,
+          payload: { ...payload, aggregated_output: `${payload.aggregated_output}${event.delta.append}` }
+        }, { publish: false });
+      }
+    }
+    this.publish(thread, event.kind, event.record, {
+      historical: event.historical,
+      records: event.records,
+      suppressPolicies: true,
+      snapshot: event.snapshot,
+      backgroundTerminals: event.backgroundTerminals,
+      queue: event.queue,
+      delta: event.delta
+    });
+  }
+
+  private applyRemoteThreadSummary(thread: ThreadState, summary: ThreadSummary) {
+    thread.workingDirectory = summary.workingDirectory;
+    thread.threadOptions = {
+      ...thread.threadOptions,
+      model: summary.model,
+      modelReasoningEffort: summary.modelReasoningEffort,
+      serviceTier: summary.serviceTier,
+      approvalPolicy: summary.approvalPolicy,
+      approvalsReviewer: summary.approvalsReviewer,
+      permissions: summary.permissions,
+      activePermissionProfile: summary.activePermissionProfile ?? undefined,
+      sandboxPolicy: summary.sandboxPolicy
+    };
+    thread.running = summary.running;
+    thread.executionStatus = summary.status;
+    thread.appServerTurnId = summary.activeTurnId;
+    thread.title = summary.title;
+    thread.updatedAt = summary.updatedAt;
+    thread.lastUsage = summary.lastUsage;
+    thread.threadUsage = summary.threadUsage;
+    thread.remoteSummary = {
+      activeTurnStartedAt: summary.activeTurnStartedAt,
+      activePlanProgress: summary.activePlanProgress,
+      activityTitle: summary.activityTitle,
+      latestAgentMessage: summary.latestAgentMessage,
+      messageCount: summary.messageCount
+    };
+  }
+
+  private acceptRemoteProjectionSeq(sessionId: string, generation: string, relaySeq: number) {
+    const session = this.sessions.get(sessionId);
+    if (session?.transportRole === "backend" && session.remoteGeneration !== generation) return false;
+    const currentGeneration = this.remoteProjectionGenerations.get(sessionId);
+    if (currentGeneration !== generation) {
+      if (currentGeneration) return false;
+      this.remoteProjectionGenerations.set(sessionId, generation);
+      this.remoteProjectionRelaySeq.set(sessionId, 0);
+      for (const thread of this.threads.values()) {
+        if (thread.sessionId !== sessionId) continue;
+        thread.records = [];
+        thread.recordSeq = 0;
+        thread.lastUsage = undefined;
+        thread.threadUsage = emptyThreadUsage();
+        this.remoteQueues.delete(thread.threadId);
+        this.historySnapshots.delete(thread);
+        this.invalidateThreadRecordIndex(thread);
+      }
+    }
+    const previous = this.remoteProjectionRelaySeq.get(sessionId) ?? 0;
+    if (relaySeq <= previous) return false;
+    this.remoteProjectionRelaySeq.set(sessionId, relaySeq);
+    return true;
+  }
+
+  async dispatchRemoteBackendCommand(sessionId: string, command: RemoteBackendCommand): Promise<unknown> {
+    const session = this.requireOnlineSession(sessionId);
+    const machineId = session.machineId;
+    const threadId = command.threadId;
+    switch (command.type) {
+      case "start_thread":
+        return await this.startSessionThread(sessionId, command.workingDirectory, command.creationOptions);
+      case "resume_thread":
+        if (!threadId) throw new Error("resume_thread command requires threadId");
+        return await this.resumeSessionThread(sessionId, threadId, command.workingDirectory);
+      case "turn": {
+        if (!threadId || command.input === undefined) throw new Error("turn command requires threadId and input");
+        const localCommand = this.runLocalCommand(threadId, command.input, command.source ?? "web");
+        if (localCommand.handled) return { result: localCommand, completion: Promise.resolve() };
+        const dispatch = this.runTurnWithDelivery(threadId, command.input, command.source ?? "web", command.options, command.submissionId);
+        return {
+          result: { submissionId: dispatch.submissionId, delivery: dispatch.delivery },
+          completion: dispatch.completion
+        };
+      }
+      case "steer": {
+        if (!threadId || command.input === undefined) throw new Error("steer command requires threadId and input");
+        const localCommand = this.runLocalCommand(threadId, command.input, command.source ?? "web");
+        if (localCommand.handled) return { result: localCommand, completion: Promise.resolve() };
+        const dispatch = this.runTurnWithDelivery(threadId, command.input, command.source ?? "web", command.options, command.submissionId);
+        return {
+          result: { submissionId: dispatch.submissionId, delivery: dispatch.delivery },
+          completion: dispatch.completion
+        };
+      }
+      case "set_goal":
+        if (!threadId) throw new Error("set_goal command requires threadId");
+        return await this.setGoal(threadId, command.goal ?? {});
+      case "clear_goal":
+        if (!threadId) throw new Error("clear_goal command requires threadId");
+        return await this.clearGoal(threadId);
+      case "cancel_queued_turn":
+        if (!threadId || !command.submissionId) throw new Error("cancel_queued_turn requires threadId and submissionId");
+        return this.cancelQueuedTurn(threadId, command.submissionId);
+      case "stop":
+        if (!threadId) throw new Error("stop command requires threadId");
+        return await this.stopTurn(threadId);
+      case "fork_thread":
+        if (!threadId) throw new Error("fork_thread command requires threadId");
+        return await this.forkThreadAtTurn(threadId, command.lastTurnId);
+      case "rename_thread":
+        if (!threadId || !command.title) throw new Error("rename_thread requires threadId and title");
+        return await this.renameThread(threadId, command.title);
+      case "suggest_thread_title":
+        if (!threadId) throw new Error("suggest_thread_title requires threadId");
+        return await this.suggestThreadTitle(threadId);
+      case "compact_thread":
+        if (!threadId) throw new Error("compact_thread requires threadId");
+        return await this.compactThread(threadId);
+      case "review_thread":
+        if (!threadId) throw new Error("review_thread requires threadId");
+        return await this.reviewThread(threadId);
+      case "approval_decision":
+        if (!threadId || !command.approvalId || !command.approvalDecision) throw new Error("approval_decision requires thread, approval and decision");
+        return await this.respondToApproval(threadId, command.approvalId, command.approvalDecision);
+      case "user_input_response":
+        if (!threadId || !command.userInputId) throw new Error("user_input_response requires thread, input id and answers");
+        return await this.respondToUserInput(threadId, command.userInputId, command.userInputAnswers ?? {});
+      case "terminate_background_terminal":
+        if (!threadId || !command.processId) throw new Error("terminate_background_terminal requires threadId and processId");
+        return await this.terminateBackgroundTerminal(threadId, command.processId);
+      case "list_threads":
+        return await this.listSessionThreadCandidates(sessionId, command.limit, command.workingDirectory);
+      case "list_models":
+        return await this.listSessionModels(sessionId, command.includeHidden, command.refresh);
+      case "list_permission_profiles":
+        return await this.listSessionPermissionProfiles(sessionId, command.workingDirectory);
+      case "list_command_palette":
+        return await this.listSessionCommandPalette(sessionId, command.workingDirectory, command.commandPalettePart);
+      case "list_apps":
+        return await this.listMachineApps(machineId, threadId);
+      case "reconcile_plugins":
+        return await this.reconcileMachinePlugins(machineId, typeof command.input === "string" ? command.input : undefined);
+      case "generate_commit_message":
+        return await this.generateCommitMessage(machineId, command.workingDirectory, typeof command.input === "string" ? command.input : "", command.commitMessageHint, command.options?.model ?? undefined, command.commitMessagePrompt);
+      case "subscribe_thread_records":
+        if (!threadId) throw new Error("subscribe_thread_records requires threadId");
+        return this.subscribeThreadRecords(threadId);
+      case "unsubscribe_thread_records":
+        if (!threadId) throw new Error("unsubscribe_thread_records requires threadId");
+        return this.unsubscribeThreadRecords(threadId);
+      case "load_thread_history":
+        if (!threadId) throw new Error("load_thread_history requires threadId");
+        {
+          const thread = this.requireThread(threadId);
+          const state = this.historySnapshots.get(thread);
+          if (!state) {
+            return {
+              loaded: false,
+              snapshotId: command.historySnapshotId ?? randomUUID(),
+              page: command.historyPage ?? 1,
+              complete: false
+            } satisfies SessionHistoryPageResult;
+          }
+          if (command.historySnapshotId && command.historySnapshotId !== state.snapshotId) {
+            return { loaded: false, snapshotId: state.snapshotId, page: state.nextPage, complete: state.complete } satisfies SessionHistoryPageResult;
+          }
+          if (command.historyPage !== undefined && command.historyPage !== state.nextPage) {
+            return { loaded: false, snapshotId: state.snapshotId, page: state.nextPage, complete: state.complete } satisfies SessionHistoryPageResult;
+          }
+          if (state.complete) {
+            return { loaded: false, snapshotId: state.snapshotId, page: state.nextPage, complete: true } satisfies SessionHistoryPageResult;
+          }
+          const page = state.nextPage;
+          const result = await this.requestNextHistoryPage(thread, state);
+          return { ...result, page } satisfies SessionHistoryPageResult;
+        }
+      default:
+        throw new Error(`Unsupported remote backend command: ${(command as { type?: string }).type ?? "unknown"}`);
+    }
+  }
+
   listThreads(): ThreadSummary[] {
     return [...this.threads.values()].map((thread) => this.summary(thread));
   }
@@ -533,6 +809,36 @@ export class ThreadHub {
     options: { before?: string; limit?: number } = {}
   ): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
+    const remote = this.remoteBackendForThread(thread);
+    if (remote) {
+      const before = options.before?.trim();
+      const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? defaultThreadHistoryPageSize)));
+      if (!before) return this.getThreadPage(threadId, { limit });
+      for (let attempts = 0; attempts < 100; attempts += 1) {
+        const page = this.getThreadPage(threadId, { before, limit });
+        const state = this.historySnapshots.get(thread);
+        if (page.records.length >= limit || !state || state.complete) return page;
+        const snapshotId = state.snapshotId;
+        const pageNumber = state.nextPage;
+        const result = await remote.execute(thread.sessionId!, {
+          commandId: randomUUID(),
+          type: "load_thread_history",
+          workingDirectory: thread.workingDirectory,
+          createdAt: new Date().toISOString(),
+          threadId,
+          historySnapshotId: snapshotId,
+          historyPage: pageNumber
+        }) as SessionHistoryPageResult;
+        const current = this.historySnapshots.get(thread);
+        if (!result.loaded) {
+          if (current && current.snapshotId !== snapshotId) continue;
+          return page;
+        }
+        if (!current || current.snapshotId !== snapshotId) continue;
+        if (current.nextPage === pageNumber) return this.getThreadPage(threadId, { before, limit });
+      }
+      return this.getThreadPage(threadId, { before, limit });
+    }
     const before = options.before?.trim();
     const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? defaultThreadHistoryPageSize)));
     if (!before) return this.getThreadPage(threadId, { limit });
@@ -620,6 +926,17 @@ export class ThreadHub {
   subscribeThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForThread(thread);
+    if (remote) {
+      void remote.execute(session.sessionId, {
+        commandId: randomUUID(),
+        type: "subscribe_thread_records",
+        workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(),
+        threadId: thread.threadId
+      });
+      return { subscribed: true };
+    }
     // 请求拥有该 thread 的 session bridge 去镜像官方 app-server turns。
     this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
@@ -634,6 +951,17 @@ export class ThreadHub {
   unsubscribeThreadRecords(threadId: string) {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForThread(thread);
+    if (remote) {
+      void remote.execute(session.sessionId, {
+        commandId: randomUUID(),
+        type: "unsubscribe_thread_records",
+        workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(),
+        threadId: thread.threadId
+      });
+      return { subscribed: false };
+    }
     this.enqueueSessionCommand(session.sessionId, {
       commandId: randomUUID(),
       type: "unsubscribe_thread_records",
@@ -655,6 +983,13 @@ export class ThreadHub {
     workingDirectory?: string
   ): Promise<SessionThreadCandidatesResult> {
     const session = this.requireOnlineSession(sessionId);
+    const remote = this.remoteBackendForSession(sessionId);
+    if (remote) {
+      return await remote.execute(sessionId, {
+        commandId: randomUUID(), type: "list_threads", workingDirectory: workingDirectory || session.workingDirectory,
+        createdAt: new Date().toISOString(), limit
+      }) as SessionThreadCandidatesResult;
+    }
     const cwd = workingDirectory || session.workingDirectory;
     const commandId = randomUUID();
     const promise = this.waitForCommand<SessionThreadCandidatesResult>(commandId, "list_threads", undefined, 60_000, cwd);
@@ -686,6 +1021,13 @@ export class ThreadHub {
     refresh = false
   ): Promise<SessionModelCatalogResult> {
     const session = this.requireOnlineSession(sessionId);
+    const remote = this.remoteBackendForSession(sessionId);
+    if (remote) {
+      return await remote.execute(sessionId, {
+        commandId: randomUUID(), type: "list_models", workingDirectory: session.workingDirectory,
+        createdAt: new Date().toISOString(), includeHidden, refresh
+      }) as SessionModelCatalogResult;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<SessionModelCatalogResult>(
       commandId,
@@ -719,6 +1061,13 @@ export class ThreadHub {
   ): Promise<SessionPermissionProfilesResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
+    const remote = this.remoteBackendForSession(sessionId);
+    if (remote) {
+      return await remote.execute(sessionId, {
+        commandId: randomUUID(), type: "list_permission_profiles", workingDirectory: cwd,
+        createdAt: new Date().toISOString()
+      }) as SessionPermissionProfilesResult;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<SessionPermissionProfilesResult>(
       commandId,
@@ -753,6 +1102,13 @@ export class ThreadHub {
   ): Promise<SessionCommandPaletteResult> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
+    const remote = this.remoteBackendForSession(sessionId);
+    if (remote) {
+      return await remote.execute(sessionId, {
+        commandId: randomUUID(), type: "list_command_palette", workingDirectory: cwd,
+        createdAt: new Date().toISOString(), commandPalettePart: part
+      }) as SessionCommandPaletteResult;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<SessionCommandPaletteResult>(
       commandId,
@@ -785,6 +1141,13 @@ export class ThreadHub {
 
   async listMachineApps(machineId: string, threadId?: string): Promise<SessionAppsResult> {
     const session = this.requireOnlineRuntimeSession(machineId);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "list_apps", workingDirectory: session.workingDirectory,
+        createdAt: new Date().toISOString(), threadId
+      }) as SessionAppsResult;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<SessionAppsResult>(commandId, "list_apps", threadId, 60_000, session.workingDirectory);
     this.enqueueSessionCommand(session.sessionId, { commandId, type: "list_apps", threadId, workingDirectory: session.workingDirectory, createdAt: new Date().toISOString() });
@@ -793,6 +1156,13 @@ export class ThreadHub {
 
   async reconcileMachinePlugins(machineId: string, reason?: string): Promise<PluginReconcileResult> {
     const session = this.requireOnlineRuntimeSession(machineId);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "reconcile_plugins", workingDirectory: session.workingDirectory,
+        createdAt: new Date().toISOString(), input: reason
+      }) as PluginReconcileResult;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<PluginReconcileResult>(commandId, "reconcile_plugins", undefined, 60_000, session.workingDirectory);
     this.enqueueSessionCommand(session.sessionId, { commandId, type: "reconcile_plugins", input: reason, workingDirectory: session.workingDirectory, createdAt: new Date().toISOString() });
@@ -812,6 +1182,16 @@ export class ThreadHub {
     const gitDiff = diff.trim();
     if (!cwd) throw new Error("Commit message generation requires cwd");
     if (!gitDiff) throw new Error("Commit message generation requires a diff");
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "generate_commit_message", workingDirectory: cwd,
+        createdAt: new Date().toISOString(), input: gitDiff,
+        ...(currentMessage?.trim() ? { commitMessageHint: currentMessage.trim() } : {}),
+        ...(prompt?.trim() ? { commitMessagePrompt: prompt.trim() } : {}),
+        options: { model: model?.trim() || lightweightGenerationModel, modelReasoningEffort: "low" }
+      }) as { message: string };
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ message: string }>(
       commandId,
@@ -846,6 +1226,13 @@ export class ThreadHub {
   ): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || session.workingDirectory;
+    const remote = this.remoteBackendForSession(sessionId);
+    if (remote) {
+      return await remote.execute(sessionId, {
+        commandId: randomUUID(), type: "start_thread", workingDirectory: cwd,
+        createdAt: new Date().toISOString(), creationOptions
+      }) as ThreadDetail;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "start_thread", undefined, 60_000, cwd);
     this.enqueueSessionCommand(session.sessionId, {
@@ -873,6 +1260,13 @@ export class ThreadHub {
   async resumeSessionThread(sessionId: string, threadId: string, workingDirectory?: string): Promise<ThreadDetail> {
     const session = this.requireOnlineSession(sessionId);
     const cwd = workingDirectory || this.threads.get(threadId)?.workingDirectory || session.workingDirectory;
+    const remote = this.remoteBackendForSession(sessionId);
+    if (remote) {
+      return await remote.execute(sessionId, {
+        commandId: randomUUID(), type: "resume_thread", workingDirectory: cwd,
+        createdAt: new Date().toISOString(), threadId
+      }) as ThreadDetail;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<ThreadDetail>(commandId, "resume_thread", threadId, 60_000, cwd);
     this.enqueueSessionCommand(session.sessionId, {
@@ -896,6 +1290,15 @@ export class ThreadHub {
   async forkThread(threadId: string, recordId?: string): Promise<ThreadDetail> {
     const source = this.requireThread(threadId);
     const session = this.requireThreadSession(source);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      const target = recordId ? forkTargetAfterRecord(source, recordId) : undefined;
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "fork_thread", workingDirectory: source.workingDirectory,
+        createdAt: new Date().toISOString(), threadId: source.threadId,
+        ...(target ? { lastTurnId: target.lastTurnId } : {}), options: { ...source.threadOptions }
+      }) as ThreadDetail;
+    }
     const forkTarget = recordId ? forkTargetAfterRecord(source, recordId) : undefined;
     const forkSeedTurns = forkTarget?.keepTurns ?? appServerTurnIds(source).length;
     const commandId = randomUUID();
@@ -917,11 +1320,34 @@ export class ThreadHub {
     return await promise;
   }
 
+  async forkThreadAtTurn(threadId: string, lastTurnId?: string): Promise<ThreadDetail> {
+    const source = this.requireThread(threadId);
+    const session = this.requireThreadSession(source);
+    const forkSeedTurns = lastTurnId ? Math.max(1, appServerTurnIds(source).indexOf(lastTurnId) + 1) : appServerTurnIds(source).length;
+    const commandId = randomUUID();
+    const promise = this.waitForCommand<ThreadDetail>(commandId, "fork_thread", source.threadId, null, source.workingDirectory);
+    const pending = this.pendingCommands.get(commandId);
+    if (pending) pending.keepTurns = forkSeedTurns;
+    this.enqueueSessionCommand(session.sessionId, {
+      commandId, type: "fork_thread", workingDirectory: source.workingDirectory,
+      createdAt: new Date().toISOString(), threadId: source.threadId,
+      ...(lastTurnId ? { lastTurnId } : {}), options: { ...source.threadOptions }
+    });
+    return await promise;
+  }
+
   async renameThread(threadId: string, title: string): Promise<ThreadDetail> {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
     const nextTitle = compactThreadTitle(title);
     if (!nextTitle) throw new Error("Thread title must not be empty");
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "rename_thread", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId: thread.threadId, title: nextTitle
+      }) as ThreadDetail;
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "rename_thread", thread.threadId, null, thread.workingDirectory);
     this.enqueueSessionCommand(session.sessionId, {
@@ -939,6 +1365,9 @@ export class ThreadHub {
 
   async deleteThread(threadId: string) {
     const thread = this.requireThread(threadId);
+    if (thread.sessionId && this.remoteBackendForSession(thread.sessionId)) {
+      throw new Error("Deleting a remote backend thread is not supported by the parent projection.");
+    }
     thread.running = false;
     thread.executionStatus = "idle";
     thread.appServerTurnId = undefined;
@@ -954,9 +1383,16 @@ export class ThreadHub {
 
   async stopTurn(threadId: string) {
     const thread = this.requireThread(threadId);
+    const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "stop", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, turnId: thread.appServerTurnId
+      }) as { stopped: boolean };
+    }
     if (!thread.running) return { stopped: false };
     if (!thread.appServerTurnId) throw new Error(`Active turn is not ready to stop: ${threadId}`);
-    const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ ok?: boolean }>(
       commandId,
@@ -982,6 +1418,13 @@ export class ThreadHub {
     const trimmedProcessId = processId.trim();
     if (!trimmedProcessId) throw new Error("Background terminal process id is required");
     const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "terminate_background_terminal", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, processId: trimmedProcessId
+      }) as { terminated: boolean };
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ terminated?: boolean }>(
       commandId,
@@ -1004,8 +1447,15 @@ export class ThreadHub {
 
   async compactThread(threadId: string) {
     const thread = this.requireThread(threadId);
-    if (thread.running) throw new Error(`Thread is running: ${threadId}`);
     const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "compact_thread", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId
+      }) as { ok?: boolean };
+    }
+    if (thread.running) throw new Error(`Thread is running: ${threadId}`);
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ ok?: boolean }>(
       commandId,
@@ -1026,8 +1476,15 @@ export class ThreadHub {
 
   async reviewThread(threadId: string) {
     const thread = this.requireThread(threadId);
-    if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
     const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "review_thread", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, reviewTarget: { type: "uncommittedChanges" }
+      }) as { ok?: boolean; reviewThreadId?: string };
+    }
+    if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ ok?: boolean; reviewThreadId?: string }>(
       commandId,
@@ -1069,6 +1526,14 @@ export class ThreadHub {
     decision: AppServerApprovalDecision
   ) {
     const thread = this.requireThread(threadId);
+    const remoteSession = thread.sessionId ? this.sessions.get(thread.sessionId) : undefined;
+    const remote = remoteSession ? this.remoteBackendForSession(remoteSession.sessionId) : undefined;
+    if (remote && remoteSession) {
+      return await remote.execute(remoteSession.sessionId, {
+        commandId: randomUUID(), type: "approval_decision", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, approvalId, approvalDecision: decision
+      }) as { status: string; decision: AppServerApprovalDecision; thread: ThreadDetail };
+    }
     const approval = this.pendingApprovals.get(approvalId);
     if (!approval || approval.threadId !== thread.threadId || approval.status !== "pending") {
       throw new Error(`Approval not found: ${approvalId}`);
@@ -1123,6 +1588,14 @@ export class ThreadHub {
     answers: AppServerUserInputAnswers
   ) {
     const thread = this.requireThread(threadId);
+    const remoteSession = thread.sessionId ? this.sessions.get(thread.sessionId) : undefined;
+    const remote = remoteSession ? this.remoteBackendForSession(remoteSession.sessionId) : undefined;
+    if (remote && remoteSession) {
+      return await remote.execute(remoteSession.sessionId, {
+        commandId: randomUUID(), type: "user_input_response", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, userInputId, userInputAnswers: answers
+      }) as { status: "answered"; thread: ThreadDetail };
+    }
     const userInput = this.pendingUserInputs.get(userInputId);
     if (!userInput || userInput.threadId !== thread.threadId || userInput.status !== "pending") {
       throw new Error(`User input not found: ${userInputId}`);
@@ -1169,6 +1642,7 @@ export class ThreadHub {
     if (!parsed) return { handled: false };
 
     const thread = this.requireThread(threadId);
+    if (thread.sessionId && this.remoteBackendForSession(thread.sessionId)) return { handled: false };
     if (parsed.command === "rename") {
       throw new Error("/rename requires interactive title confirmation in CodexHub Web");
     }
@@ -1192,6 +1666,13 @@ export class ThreadHub {
     const session = this.requireThreadSession(thread);
     const conversationContext = threadTitleGenerationContext(thread.records, thread.title);
     if (!conversationContext) throw new Error("Thread has no conversation context for title generation");
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return await remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "suggest_thread_title", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, input: conversationContext
+      }) as { title: string };
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<{ title: string }>(
       commandId,
@@ -1230,6 +1711,40 @@ export class ThreadHub {
     requestedSubmissionId?: string
   ): ThreadTurnDispatch {
     const thread = this.requireThread(threadId);
+    const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      const submissionId = requestedSubmissionId?.trim() || randomUUID();
+      const state: { submissionId: string; delivery: ThreadTurnDelivery } = { submissionId, delivery: "turn" };
+      const command: RemoteBackendCommand = {
+        commandId: randomUUID(),
+        type: "turn",
+        workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(),
+        threadId,
+        input,
+        source: _source,
+        submissionId,
+        options
+      };
+      const deliveryAcknowledgement = remote.execute(session.sessionId, command).then((result) => {
+        const ack = asRecord(result);
+        if (typeof ack?.submissionId === "string") state.submissionId = ack.submissionId;
+        if (ack?.delivery === "turn" || ack?.delivery === "steer" || ack?.delivery === "goal" || ack?.delivery === "queued") {
+          state.delivery = ack.delivery;
+        }
+      });
+      const completion = deliveryAcknowledgement.then(() => remote.waitForCompletion
+        ? remote.waitForCompletion(session.sessionId, command.commandId)
+        : undefined);
+      return {
+        get submissionId() { return state.submissionId; },
+        get delivery() { return state.delivery; },
+        accepted: true,
+        completion,
+        deliveryAcknowledgement
+      };
+    }
     const submissionId = requestedSubmissionId?.trim() || randomUUID();
     const submissionCreatedAt = new Date().toISOString();
     if (thread.running && _source === "web" && options?.goalMode) {
@@ -1368,12 +1883,28 @@ export class ThreadHub {
   }
 
   setGoal(threadId: string, goal: ThreadGoalUpdate) {
-    return this.setThreadGoal(this.requireThread(threadId), goal);
+    const thread = this.requireThread(threadId);
+    const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "set_goal", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, goal
+      });
+    }
+    return this.setThreadGoal(thread, goal);
   }
 
   clearGoal(threadId: string) {
     const thread = this.requireThread(threadId);
     const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "clear_goal", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId
+      });
+    }
     const commandId = randomUUID();
     const promise = this.waitForCommand<void>(commandId, "clear_goal", thread.threadId, null, thread.workingDirectory);
     this.enqueueSessionCommand(session.sessionId, {
@@ -1437,6 +1968,8 @@ export class ThreadHub {
   }
 
   queuedTurnItems(threadId: string): ThreadQueueItem[] {
+    const remoteQueue = this.remoteQueues.get(threadId);
+    if (remoteQueue) return remoteQueue;
     return (this.queuedTurns.get(threadId) ?? []).map((item, index) => ({
       submissionId: item.submissionId,
       text: summarizeProxyInput(item.input),
@@ -1449,6 +1982,14 @@ export class ThreadHub {
 
   cancelQueuedTurn(threadId: string, submissionId: string) {
     const thread = this.requireThread(threadId);
+    const session = this.requireThreadSession(thread);
+    const remote = this.remoteBackendForSession(session.sessionId);
+    if (remote) {
+      return remote.execute(session.sessionId, {
+        commandId: randomUUID(), type: "cancel_queued_turn", workingDirectory: thread.workingDirectory,
+        createdAt: new Date().toISOString(), threadId, submissionId
+      }).then(() => ({ submissionId }));
+    }
     const queue = this.queuedTurns.get(threadId) ?? [];
     const index = queue.findIndex((item) => item.submissionId === submissionId);
     if (index < 0) throw new Error(`Queued submission not found or already dispatching: ${submissionId}`);
@@ -1556,6 +2097,15 @@ export class ThreadHub {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     return session;
+  }
+
+  private remoteBackendForSession(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    return session?.transportRole === "backend" ? this.options.remoteBackend : undefined;
+  }
+
+  private remoteBackendForThread(thread: ThreadState) {
+    return thread.sessionId ? this.remoteBackendForSession(thread.sessionId) : undefined;
   }
 
   private requireOnlineSession(sessionId: string) {
@@ -3109,6 +3659,10 @@ export class ThreadHub {
       historical?: boolean;
       records?: CodexRecord[];
       delta?: ThreadStreamEvent["delta"];
+      snapshot?: ThreadStreamEvent["snapshot"];
+      backgroundTerminals?: ThreadBackgroundTerminals;
+      queue?: ThreadQueueItem[];
+      suppressPolicies?: boolean;
     } = {}
   ) {
     const streamEvent: ThreadStreamEvent = {
@@ -3120,10 +3674,11 @@ export class ThreadHub {
       ...(options.delta ? { delta: options.delta } : {}),
       ...((kind === "thread" || kind === "done")
         ? {
-          backgroundTerminals: thread.backgroundTerminals,
-          queue: this.queuedTurnItems(thread.threadId)
+          backgroundTerminals: options.backgroundTerminals ?? thread.backgroundTerminals,
+          queue: options.queue ?? this.queuedTurnItems(thread.threadId)
         }
         : {}),
+      ...(options.snapshot ? { snapshot: options.snapshot } : {}),
       thread: this.summary(thread),
       record
     };
@@ -3134,6 +3689,7 @@ export class ThreadHub {
       kind === "record"
       && record !== undefined
       && !options.historical
+      && !options.suppressPolicies
       && isCompletedCompactionRecord(record)
     ) {
       this.maybeAutoRenameThread(thread);
@@ -3173,14 +3729,17 @@ export class ThreadHub {
   }
 
   private summary(thread: ThreadState): ThreadSummary {
-    const activityTitle = threadActivityTitleFromRecords(thread.records, thread.threadId);
-    const latestAgentMessage = latestAgentMessageFromRecords(thread.records);
-    const activeTurnStartedAt = thread.running && thread.appServerTurnId
+    const activityTitle = threadActivityTitleFromRecords(thread.records, thread.threadId) ?? thread.remoteSummary?.activityTitle;
+    const latestAgentMessage = latestAgentMessageFromRecords(thread.records) ?? thread.remoteSummary?.latestAgentMessage;
+    const activeTurnStartedAt = (thread.running && thread.appServerTurnId
       ? activeTurnStartedAtFromRecords(thread.records, thread.appServerTurnId)
-      : undefined;
-    const activePlanProgress = thread.running && thread.appServerTurnId
-      ? activePlanProgressFromRecords(thread.records, thread.threadId, thread.appServerTurnId)
-      : undefined;
+      : undefined) ?? thread.remoteSummary?.activeTurnStartedAt;
+    const activePlanProgress = (thread.running && thread.appServerTurnId
+      ? (() => {
+          const progress = activePlanProgressFromRecords(thread.records, thread.threadId, thread.appServerTurnId!);
+          return progress ? planProgressSummary(progress) : undefined;
+        })()
+      : undefined) ?? thread.remoteSummary?.activePlanProgress;
     return {
       threadId: thread.threadId,
       workingDirectory: thread.workingDirectory,
@@ -3197,12 +3756,12 @@ export class ThreadHub {
       running: thread.running,
       ...(thread.running && thread.appServerTurnId ? { activeTurnId: thread.appServerTurnId } : {}),
       ...(activeTurnStartedAt ? { activeTurnStartedAt } : {}),
-      ...(activePlanProgress ? { activePlanProgress: planProgressSummary(activePlanProgress) } : {}),
+      ...(activePlanProgress ? { activePlanProgress } : {}),
       title: thread.title,
       ...(activityTitle ? { activityTitle } : {}),
       ...(latestAgentMessage ? { latestAgentMessage } : {}),
       updatedAt: thread.updatedAt,
-      messageCount: this.threadRecordIndex(thread).messageCount,
+      messageCount: thread.remoteSummary?.messageCount ?? this.threadRecordIndex(thread).messageCount,
       lastUsage: thread.lastUsage,
       threadUsage: thread.threadUsage
     };
@@ -3236,10 +3795,10 @@ export class ThreadHub {
     return {
       records,
       history: {
-        hasOlder: start > 0 || historyState?.complete === false,
+        hasOlder: start > 0 || historyState?.hasOlder === true || historyState?.complete === false,
         ...(records[0] ? { oldestRecordId: records[0].id } : {}),
         ...(records.at(-1) ? { newestRecordId: records.at(-1)!.id } : {}),
-        loadedRecordCount: records.length
+        loadedRecordCount: historyState?.loadedRecordCount ?? records.length
       }
     };
   }

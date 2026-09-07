@@ -159,8 +159,8 @@ const main = async () => {
       dataDir: sharedProfileDataDir,
       surface: "vscode",
       parentRegistrationIdentity: { machineId: sharedMachineA, name: sharedMachineAName },
-      autoStartRuntime: false,
-      features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+      autoStartRuntime: true,
+      features: { localMachine: true, ssh: false, tasks: false, integrations: false }
     });
     try {
       await apiJson(`http://127.0.0.1:${seedPort}`, "/api/registered/parent", {
@@ -183,8 +183,8 @@ const main = async () => {
       dataDir: sharedProfileDataDir,
       surface: "vscode",
       parentRegistrationIdentity: { machineId: sharedMachineA, name: sharedMachineAName },
-      autoStartRuntime: false,
-      features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+      autoStartRuntime: true,
+      features: { localMachine: true, ssh: false, tasks: false, integrations: false }
     });
     const sharedB = await startServer({
       host: "127.0.0.1",
@@ -192,8 +192,8 @@ const main = async () => {
       dataDir: sharedProfileDataDir,
       surface: "vscode",
       parentRegistrationIdentity: { machineId: sharedMachineB, name: sharedMachineBName },
-      autoStartRuntime: false,
-      features: { localMachine: false, ssh: false, tasks: false, integrations: false }
+      autoStartRuntime: true,
+      features: { localMachine: true, ssh: false, tasks: false, integrations: false }
     });
     try {
       await Promise.all([
@@ -606,7 +606,7 @@ const startRegisteredServer = async (apiBase: string, machineId: string, machine
     env: {
       ...process.env,
       CODEX_HUB_DATA_DIR: dataDir,
-      CODEX_HUB_LOCAL_MACHINE: "0",
+      CODEX_HUB_LOCAL_MACHINE: "1",
       CODEX_HUB_PLUGIN_TELEGRAM: "0",
       TELEGRAM_BOT_TOKEN: ""
     },
@@ -637,7 +637,7 @@ const startDynamicRegisteredServer = async (dataDir: string) => {
     env: {
       ...process.env,
       CODEX_HUB_DATA_DIR: dataDir,
-      CODEX_HUB_LOCAL_MACHINE: "0",
+      CODEX_HUB_LOCAL_MACHINE: "1",
       CODEX_HUB_PLUGIN_TELEGRAM: "0",
       TELEGRAM_BOT_TOKEN: ""
     },

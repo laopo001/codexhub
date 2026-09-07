@@ -12,6 +12,7 @@ import {
   type CodexAppServerLaunchOptions
 } from "./codexAppServerProcess.js";
 import { runCodexhubMachine } from "./codexhubMachine.js";
+import { registerParent, resolveRegisterParentTarget } from "./registerParent.js";
 
 type ServerCommandOptions = {
   host?: string;
@@ -35,6 +36,13 @@ type MachineCommandOptions = {
   approvalPolicy?: string;
   approvalsReviewer?: string;
   sandbox?: string;
+};
+
+type RegisterCommandOptions = {
+  to: string;
+  authToken?: string;
+  machineId?: string;
+  name?: string;
 };
 
 type SshConnectCommandOptions = {
@@ -141,6 +149,26 @@ program
       name: options.name,
       appServerLaunch
     });
+  });
+
+program
+  .command("register")
+  .description("Register the local CodexHub server with a parent server and exit")
+  .requiredOption("--to <url>", "parent CodexHub server URL (a codexhub_token query token is supported)")
+  .option("--auth-token <token>", "parent server auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
+  .option("--machine-id <id>", "stable machine id for the parent registration")
+  .option("--name <name>", "display name for the parent registration")
+  .action(async (options: RegisterCommandOptions) => {
+    const parent = resolveRegisterParentTarget(options.to, options.authToken);
+    await registerParent({
+      localServerUrl: apiBase(),
+      localAuthToken: process.env.CODEX_HUB_AUTH_TOKEN,
+      parentUrl: parent.url,
+      parentAuthToken: parent.authToken,
+      machineId: options.machineId,
+      name: options.name
+    });
+    console.log("Registration request accepted by local CodexHub server.");
   });
 
 const sshCommand = program

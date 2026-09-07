@@ -11,7 +11,7 @@ Machine、surface、workspace、project、thread 与 `workingDirectory` 的身�
 - 共享核心：API server 统一管理 machines、machine runtime sessions 和 threads，并把轻量 project 元数据投影到 `/api/projects`；Web 左侧按项目优先展示，点击 project 只切换 active path，Add Tab/thread picker 基于该 path 创建或恢复 thread。
 - HTTP API：给 Web、外部脚本或本地自动化调用。
 - Web UI：React + TypeScript 的会话界面。
-- Machine：server 默认内嵌一台 `local` machine；远端或宿主机也可以用 `codexhub server --register-to` 主动注册成 `registered` machine，负责路径校验和维护 machine 级 runtime session。
+- Machine：server 默认内嵌一台 `local` machine；`codexhub register --to <parent>` 把已有后端的本机执行能力接入父 server，复用该后端的 local runtime。`codexhub server --register-to` 是启动并注册的快捷入口。
 - SSH：本机 server 可读取 `~/.ssh/config` 的 host 列表，通过系统 `ssh` 建立 reverse tunnel，并默认下发当前 build 的 remote client 到远端运行。
 - Telegram bot：由 API server 内置启动，把 Telegram 消息转成 Codex turn。
 
@@ -60,19 +60,35 @@ CodexHub 启动官方 `codex app-server` 时会先解析 Codex CLI：优先使�
 
 CodexHub 不读取或注入 Codex 私有的 `models_cache.json` / `model_catalog_json`。machine 从在线 app-server 取得并归一化 `model/list` 后，会把模型目录缓存到 `${CODEX_HUB_DATA_DIR:-~/.config/codexhub}/runtime-catalog-cache/`；嵌入 surface 使用对应 server data directory。模型缓存按 machine、Codex CLI 版本、app-server 报告的 `codexHome` 和 hidden 模式隔离，每个作用域独立原子写入，避免共享 data directory 的多个进程互相覆盖。默认 6 小时后视为过期，可用 `CODEX_HUB_CATALOG_CACHE_TTL_MS` 调整；旧 `CODEX_HUB_MODEL_CATALOG_CACHE_TTL_MS` 仍作为兼容别名。过期缓存可以先用于响应，同时后台刷新；接口会返回缓存来源，`refresh=true` 可强制刷新。`permissionProfile/list` 和 Command Palette 的 plugin/skill 候选不持久化，Web 在 Composer 挂载后后台加载，并在当前页面按 machine/cwd 复用。
 
-远端机器或容器外的宿主机可以主动注册。远端已经安装 CodexHub 时，直接让远端 server 注册到父 server：
+远端机器或容器外的宿主机可以主动注册。启动后端与注册已有后端是两个独立操作：
 
 ```bash
-codexhub server --register-to http://127.0.0.1:8788
+# 在子机启动后端
+codexhub server
+
+# 在另一个终端，把子机已有后端注册到父机
+codexhub register --to http://parent-host:8788
+
+# 子机后端使用非默认地址时，--server 指定子机，--to 指定父机
+codexhub --server http://127.0.0.1:8789 register --to http://parent-host:8788
+
+# 启动后立即注册的快捷入口
+codexhub server --register-to http://parent-host:8788
 ```
 
-也可以在 Web 的 Connections / Registered 里复制当前 server 的 register 命令。远端只需要能从 `PATH` 找到 `codexhub`、`node` 和官方 `codex` 命令；远端 server 会在提供自身 Web/API 的同时，额外用 machine WebSocket 连回父 server。父 server 只把它看成一台动态 `registered` machine，不同步子 server 的 projects、tasks、config 或 thread transcript 权威数据，也不把这台 machine 写入父 server 的 `config.yaml`；新 machine 在线时 Web 会显示 success message，连接断开后显示 warning message 并从父 server machine 列表消失。页面首次加载已有在线 machine 时不会补弹提示，之后重新连接则会再次提示。打开项目时，父 server 会把请求发给在线 machine；machine 进程在它所在的机器上解析路径，确认它存在且是目录，然后创建或复用 machine 级 runtime session。Registered machine 只启动远端官方 `codex app-server` 并通过同一条 machine WebSocket 反向多路复用 app-server WebSocket 帧；父 server 在本地消费官方 app-server 协议并为该目录创建或复用 thread。除内嵌 `local` machine 外，server 不扫描其他机器的文件系统。
+`register` 调用子机已有后端的 `/api/registered/parent` 后退出，不启动后端或第二套 app server。子机必须启用 local machine；后端未启动或 local machine 被禁用时明确报错。它与 Web 的 Connections / Registered 面板共用注册入口，由子机后端维持连接和断线重连。
 
-父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。token 完全可选，父 server 没有启用 `CODEX_HUB_AUTH_TOKEN` 时可以直接用空 token 注册测试。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、普通 server 的 machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。VSCode 同一执行 authority 的所有窗口共享父 URL、可选 token 和一条由 authority ID 派生的稳定 machine transport；Windows、WSL、Remote SSH 等不同 authority 各自注册为独立 machine。Disconnect 会中止正在握手或已在线的 WebSocket、等待 runner 完全退出，并删除自动注册配置。CLI 和动态 API 从 `?codexhub_token=` 提取父 server auth token，也可以使用 `--register-auth-token` 或 `CODEX_HUB_REGISTER_AUTH_TOKEN`；显式空 token 表示不使用认证，CLI / 环境变量的启动时 override 仍只作用于当前进程，不覆盖已保存的 GUI 配置。连接错误和状态只显示去除 query/userinfo 的目标 URL，不记录或投影 token。
+本机后端地址沿用 CLI 的全局 `--server` / `CODEX_HUB_SERVER_URL` 设置，默认是 `http://127.0.0.1:8788`。注册 VSCode/Electron 已有的共享 authority 时，应显式指定该 authority 地址（默认 Windows/macOS/Linux 为 `28788`，WSL 为 `28789`），不会自动启动或切换另一个后端。
+
+子机通过主动建立的 WebSocket 接入父机，无需开放子机后端或 app-server 的入站端口。父机发送 CodexHub 命令并订阅事件；子机后端统一处理本地 UI 和父机请求，管理同一个 local runtime。父机不为这条后端注册连接建立 app-server 协议客户端。取消注册或父机失联只释放远程连接与订阅，不关闭子机 runtime 或中断本地执行。thread transcript 的最终来源仍是官方 app server。
+
+父机只接入子机的本机执行能力，不导入子机其它远端 machines、tasks 或 config。它把子机显示为动态 `registered` machine，不把该 machine 写入父机 `config.yaml`；在线时显示 success message，断线时显示 warning message 并移除在线 machine。首次加载已有连接不补弹提示。父机上的 machine identity 与子机 local identity 在注册边界映射，project identity 仍是各自 authority 下的 `machineId + path`。文件与目录操作始终由子机执行。
+
+父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。token 完全可选，父 server 没有启用 `CODEX_HUB_AUTH_TOKEN` 时可以直接用空 token 注册测试。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、普通 server 的 machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。VSCode 同一执行 authority 的所有窗口共享父 URL、可选 token 和一条由 authority ID 派生的稳定 machine transport；Windows、WSL、Remote SSH 等不同 authority 各自注册为独立 machine。Disconnect 会中止正在握手或已在线的 WebSocket、等待 runner 完全退出，并删除自动注册配置。父机 token 优先级为 `register --auth-token`、Register URL 中的 `?codexhub_token=`、`CODEX_HUB_REGISTER_AUTH_TOKEN`；显式空 token 表示不使用父机认证。本机 API 请求使用 `CODEX_HUB_AUTH_TOKEN`，与父机 token 分开。`register` 与 GUI 一样保存注册配置；`server --register-auth-token` 及启动时环境 override 只作用于当前进程，不覆盖已保存的配置。连接错误和状态只显示去除 query/userinfo 的目标 URL，不记录或投影 token。
 
 CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:8789` 注册到 `127.0.0.1:8788` 是允许的。
 
-如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍保留为 one-shot bootstrap 入口，会通过 `/api/remote-client/:hash` 下载父 server 当前 build 的 remote client 后以同样的 registered tunnel 模式连回。
+需要独立运行轻量 machine 时，仍可使用 `codexhub machine --type registered`。如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍会下载 remote client 后以 registered tunnel 模式连回。这两种模式自行管理 app server，与复用已有后端的 `register` 不同；SSH 模式保持原有行为。
 
 Project 名称来自目录 basename，不单独持久化展示名或提供重命名入口。Web project 卡片点击只切换 active project path；machine transport 建立后会立即启动唯一 app-server runtime，并通过 `initialize` 协议拿到 CLI 版本；点击 Add Thread 时只为 active path 创建或恢复 thread。卡片不展示 open、history 或 thread 数量，也不提供手动重启/结束 runtime 按钮。runtime 生命周期跟 machine/server 主进程走，project delete、watcher idle-close 和普通空闲都不会关闭它。
 
