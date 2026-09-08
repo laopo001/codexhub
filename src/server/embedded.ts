@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import net from "node:net";
 import { loadDotEnv } from "../core/dotenv.js";
-import type { CodexHubAuthorityDescriptor, CodexHubSurface } from "../shared/surfaceTypes.js";
+import { authorityServiceHost, type CodexHubAuthorityDescriptor, type CodexHubSurface } from "../shared/surfaceTypes.js";
+import type { CodexAppServerLaunchOptions } from "../shared/appServerLaunch.js";
 import {
   startServer,
   type ParentRegistrationIdentity,
@@ -21,6 +22,7 @@ export type EmbeddedServerOptions = {
   authorityBuildPollMs?: number;
   authorityRestart?: {
     servicePath: string;
+    serviceCommand?: string[];
     remoteClientPath?: string;
     nodeCommand: string;
     nodeSource: "configured" | "path" | "host-fallback";
@@ -29,6 +31,8 @@ export type EmbeddedServerOptions = {
   authToken?: string;
   localProjectCatalog?: "editable" | "fixed";
   parentRegistrationIdentity?: ParentRegistrationIdentity;
+  parentRegistration?: Partial<import("../shared/apiContract.js").ParentRegistrationConnectInput>;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   authority?: CodexHubAuthorityDescriptor;
   embeddedSurfaceLeaseTimeoutMs?: number;
   webClientTimeoutMs?: number;
@@ -39,7 +43,7 @@ export type EmbeddedServerOptions = {
 
 export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
   await loadDotEnv();
-  const host = options.host ?? "0.0.0.0";
+  const host = authorityServiceHost(process.env, options.host);
   const preferredPort = options.portMode === "random"
     ? await findFreePort(host)
     : options.preferredPort;
@@ -60,6 +64,8 @@ export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
       authToken: options.authToken,
       localProjectCatalog: options.localProjectCatalog,
       parentRegistrationIdentity: options.parentRegistrationIdentity,
+      parentRegistration: options.parentRegistration,
+      appServerLaunch: options.appServerLaunch,
       authority: options.authority,
       embeddedSurfaceLeaseTimeoutMs: options.embeddedSurfaceLeaseTimeoutMs,
       webClientTimeoutMs: options.webClientTimeoutMs,

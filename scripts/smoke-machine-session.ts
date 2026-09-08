@@ -2733,7 +2733,7 @@ const assertLocalShellExitStatusView = async () => {
     }
   };
   const views = recordsToViews([finishedRecord, runningRecord]);
-  if (views[0]?.status !== "failed" || views[0]?.statusText !== "Failed" || views[1]?.status !== "in_progress" || views[1]?.statusText !== "Running") {
+  if (views[0]?.status !== "completed" || views[0]?.statusText !== "Exit 1" || views[1]?.status !== "in_progress" || views[1]?.statusText !== "Running") {
     throw new Error(`local shell status views were not normalized: ${JSON.stringify(views)}`);
   }
   const [pendingView] = recordsToViews([pendingCommandRecord]);

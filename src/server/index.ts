@@ -213,6 +213,7 @@ export type ServerStartOptions = {
   authorityBuildPollMs?: number;
   authorityRestart?: {
     servicePath: string;
+    serviceCommand?: string[];
     remoteClientPath?: string;
     nodeCommand: string;
     nodeSource: "configured" | "path" | "host-fallback";
@@ -369,6 +370,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   if (authorityService && options.authorityRestart && buildId && options.authority) {
     restartCoordinator = createAuthorityRestartCoordinator({
       servicePath: options.authorityRestart.servicePath,
+      serviceCommand: options.authorityRestart.serviceCommand,
+      appServerLaunch,
       staticDirectory,
       remoteClientPath: options.authorityRestart.remoteClientPath,
       dataDir: path.dirname(state.path),
@@ -904,6 +907,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       port: config.port,
       surface,
       authority: options.authority,
+      appServerLaunch,
       authorityUpdate,
       ...(options.authority ? {
         authorityLocalBuild,
@@ -929,7 +933,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       telegram: { started: Boolean(telegramBot) }
     }),
     restartAuthority: restartAuthority
-      ? () => restartAuthority(authorityUpdate?.restartable ? authorityUpdate.buildId : undefined)
+      ? (targetBuildId) => restartAuthority(targetBuildId ?? (authorityUpdate?.restartable ? authorityUpdate.buildId : undefined))
       : undefined,
     heartbeatWebClient: webClients
       ? (input) => {

@@ -205,6 +205,43 @@ export type CodexHubAuthorityDescriptor = {
 export const authorityHostServicePort = 28_788;
 export const embeddedSurfaceProtocolVersion = 2;
 
+/**
+ * Resolve the one authority port setting shared by CLI, server, VS Code, and
+ * Electron. CODEX_HUB_AUTHORITY_PORT remains a compatibility alias while
+ * callers migrate to CODEX_HUB_PORT. WSL reserves +1 to avoid Windows
+ * localhost collisions under mirrored networking.
+ */
+export const authorityServicePort = (
+  env: NodeJS.ProcessEnv = process.env,
+  platform = process.platform,
+  explicitPort?: number | string
+) => {
+  if (explicitPort !== undefined) return parseAuthorityPort(explicitPort, "authority port");
+  const unified = env.CODEX_HUB_PORT?.trim();
+  const legacy = env.CODEX_HUB_AUTHORITY_PORT?.trim();
+  if (unified && legacy) {
+    const unifiedPort = parseAuthorityPort(unified, "CODEX_HUB_PORT");
+    const legacyPort = parseAuthorityPort(legacy, "CODEX_HUB_AUTHORITY_PORT");
+    if (unifiedPort !== legacyPort) {
+      throw new Error(
+        `CODEX_HUB_PORT (${unifiedPort}) and CODEX_HUB_AUTHORITY_PORT (${legacyPort}) must match.`
+      );
+    }
+    return unifiedPort;
+  }
+  if (unified) return parseAuthorityPort(unified, "CODEX_HUB_PORT");
+  if (legacy) return parseAuthorityPort(legacy, "CODEX_HUB_AUTHORITY_PORT");
+  return authorityHostServicePort + (isWslEnvironment(env, platform) ? 1 : 0);
+};
+
+const parseAuthorityPort = (value: number | string, label: string) => {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
+  return port;
+};
+
 export const isCodexHubSurface = (value: unknown): value is CodexHubSurface =>
   value === "default" || value === "vscode" || value === "electron";
 
@@ -234,21 +271,22 @@ export const authorityKind = (
   return "linux";
 };
 
-/**
- * WSL mirrored networking 与 Windows 共用 localhost 端口空间，因此 WSL 固定
- * 使用相邻的 +1 端口；不同远程 authority 各自拥有独立的网络命名空间。
- */
-export const authorityServicePort = (
+
+/** One listen-host policy for server and embedded launchers. Explicit CLI overrides win. */
+export const authorityServiceHost = (
   env: NodeJS.ProcessEnv = process.env,
-  platform = process.platform
+  explicitHost?: string
 ) => {
-  const configured = env.CODEX_HUB_AUTHORITY_PORT?.trim();
-  if (configured) {
-    const port = Number(configured);
-    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
-      throw new Error(`Invalid CODEX_HUB_AUTHORITY_PORT: ${configured}`);
-    }
-    return port;
+  const unified = env.CODEX_HUB_HOST?.trim();
+  const legacy = env.CODEX_HUB_AUTHORITY_HOST?.trim();
+  if (explicitHost === undefined && unified && legacy && unified !== legacy) {
+    throw new Error("CODEX_HUB_HOST and CODEX_HUB_AUTHORITY_HOST must match.");
   }
-  return authorityHostServicePort + (isWslEnvironment(env, platform) ? 1 : 0);
+  const host = explicitHost?.trim() || unified || legacy || "127.0.0.1";
+  if (host === "localhost") return "127.0.0.1";
+  if (!["127.0.0.1", "0.0.0.0", "::"].includes(host)) {
+    const label = legacy && !unified && explicitHost === undefined ? "CODEX_HUB_AUTHORITY_HOST" : "CODEX_HUB_HOST";
+    throw new Error(`Invalid ${label}: ${host}. Expected 127.0.0.1, 0.0.0.0, or ::.`);
+  }
+  return host;
 };

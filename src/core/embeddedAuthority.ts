@@ -1,6 +1,8 @@
+import { readBooleanEnv } from "../shared/env.js";
+import type { CodexAppServerLaunchOptions } from "../shared/appServerLaunch.js";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open as openFile, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -10,6 +12,7 @@ import type { HealthPayload } from "../shared/apiContract.js";
 import {
   authorityKind,
   authorityServicePort,
+  authorityServiceHost,
   embeddedSurfaceProtocolVersion,
   type AuthorityServiceSource
 } from "../shared/surfaceTypes.js";
@@ -23,6 +26,7 @@ export type EmbeddedAuthorityHandle = {
   startedByCaller: boolean;
   pid?: number;
   serverInstanceId: string;
+  localMachineEnabled?: boolean;
 };
 
 export type EnsureEmbeddedAuthorityInput = {
@@ -39,10 +43,20 @@ export type EnsureEmbeddedAuthorityInput = {
   /** Environment visible to the launcher for config.yaml-backed resolution. */
   environment?: NodeJS.ProcessEnv;
   authorityServiceSource?: AuthorityServiceSource;
+  /** Optional complete argv prefix for a shared CLI authority entrypoint. */
+  serviceCommand?: string[];
+  /** Explicit app-server launch policy; validated on reuse and preserved across restart. */
+  appServerLaunch?: CodexAppServerLaunchOptions;
+  requireStaticDirectory?: boolean;
+  requireHost?: boolean;
+  host?: string;
+  startupTimeoutMs?: number;
 };
 
 export type AuthorityRestartLaunchSpec = {
   servicePath: string;
+  serviceCommand?: string[];
+  appServerLaunch?: CodexAppServerLaunchOptions;
   staticDirectory: string;
   remoteClientPath?: string;
   dataDir: string;
@@ -215,6 +229,8 @@ const requestRestart = async (
     await validateRestartLaunchSpec({ ...input, buildId, oldServerInstanceId: input.serverInstanceId });
     const spec: AuthorityRestartLaunchSpec = {
       servicePath: input.servicePath,
+      serviceCommand: input.serviceCommand,
+      appServerLaunch: input.appServerLaunch,
       staticDirectory: input.staticDirectory,
       ...(input.remoteClientPath ? { remoteClientPath: input.remoteClientPath } : {}),
       dataDir: input.dataDir,
@@ -248,7 +264,7 @@ const buildFingerprint = (buildId: string) => buildId.split(":").slice(-2).join(
 const validateRestartLaunchSpec = async (input: AuthorityRestartCoordinatorInput & { buildId: string; oldServerInstanceId: string }) => {
   if (!input.authorityId.startsWith("authority-")) throw new Error("Invalid authority id in restart spec.");
   if (!Number.isInteger(input.port) || input.port <= 0 || input.port > 65_535) throw new Error("Invalid authority port in restart spec.");
-  if (!["127.0.0.1", "0.0.0.0", "::"].includes(input.host)) throw new Error("Invalid authority host in restart spec.");
+  authorityServiceHost({}, input.host);
   if (input.protocolVersion !== embeddedSurfaceProtocolVersion) throw new Error("Invalid authority protocol in restart spec.");
   const [service, staticDir] = await Promise.all([stat(input.servicePath), stat(input.staticDirectory)]);
   if (!service.isFile() || !staticDir.isDirectory()) throw new Error("Restart spec paths are not usable.");
@@ -267,7 +283,7 @@ const spawnRestartSupervisor = async (spec: AuthorityRestartLaunchSpec, authToke
   try {
     const childEnv: NodeJS.ProcessEnv = { ...(process.env as NodeJS.ProcessEnv) };
     delete childEnv.CODEX_HUB_AUTH_TOKEN;
-    const child = spawn(spec.nodeCommand, [spec.servicePath, "--restart-supervisor", "--handoff", handoffPath], {
+    const child = spawn(spec.nodeCommand, [...(spec.serviceCommand ?? [spec.servicePath]), "--restart-supervisor", "--handoff", handoffPath], {
       cwd: spec.dataDir, detached: true, windowsHide: true, stdio: ["ignore", logFd, logFd], env: childEnv
     });
     await new Promise<void>((resolve, reject) => {
@@ -311,7 +327,7 @@ export const runAuthorityRestartSupervisor = async (handoffPath: string) => {
   delete childEnv.CODEX_HUB_RESTART_HANDOFF;
   delete childEnv.CODEX_HUB_AUTH_TOKEN;
   if (authToken) childEnv.CODEX_HUB_AUTH_TOKEN = authToken;
-  const args = [spec.servicePath, "--port", String(spec.port), "--authority-id", spec.authorityId, "--authority-kind", spec.authorityKind, "--data-dir", spec.dataDir, "--static-directory", spec.staticDirectory, "--build-id", spec.buildId, "--project-catalog", spec.projectCatalog, ...(spec.remoteClientPath ? ["--remote-client", spec.remoteClientPath] : []), ...(spec.authRequired ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])];
+  const args = [...(spec.serviceCommand ?? [spec.servicePath]), "--host", spec.host, ...authorityLaunchArgs(spec.appServerLaunch), "--port", String(spec.port), "--authority-id", spec.authorityId, "--authority-kind", spec.authorityKind, "--data-dir", spec.dataDir, "--static-directory", spec.staticDirectory, "--build-id", spec.buildId, "--project-catalog", spec.projectCatalog, ...(spec.remoteClientPath ? ["--remote-client", spec.remoteClientPath] : []), ...(spec.authRequired ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])];
   const logPath = path.join(spec.dataDir, "authority.log");
   const logFd = openSync(logPath, "a", 0o600);
   try {
@@ -324,7 +340,9 @@ export const runAuthorityRestartSupervisor = async (handoffPath: string) => {
   let lastError = "successor health check timed out";
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`http://127.0.0.1:${spec.port}/api/health`);
+      const response = await fetch(`http://127.0.0.1:${spec.port}/api/health`, {
+        headers: spec.authRequired ? { authorization: `Bearer ${authToken}` } : undefined
+      });
       const health = await response.json() as HealthPayload;
       if (response.ok && health.authority?.authorityId === spec.authorityId && health.build === spec.buildId && health.authority.surfaceProtocolVersion === spec.protocolVersion && health.serverInstanceId !== spec.oldServerInstanceId) return;
       lastError = `successor health mismatch: ${JSON.stringify({ status: response.status, authorityId: health.authority?.authorityId, build: health.build, protocol: health.authority?.surfaceProtocolVersion, serverInstanceId: health.serverInstanceId })}`;
@@ -365,7 +383,7 @@ export const resolveEmbeddedAuthorityPort = async (
   return authorityServicePort({
     ...(configEnv ?? {}),
     ...env
-  });
+  }, process.platform);
 };
 
 /**
@@ -379,63 +397,89 @@ export const resolveEmbeddedAuthorityHost = async (
   env: NodeJS.ProcessEnv = process.env
 ) => {
   const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
-  const configured = env.CODEX_HUB_AUTHORITY_HOST?.trim()
-    || configEnv?.CODEX_HUB_AUTHORITY_HOST?.trim()
-    || "127.0.0.1";
-  if (configured === "127.0.0.1" || configured === "0.0.0.0" || configured === "::") return configured;
-  throw new Error(
-    `Invalid CODEX_HUB_AUTHORITY_HOST: ${configured}. Expected 127.0.0.1, 0.0.0.0, or ::.`
-  );
+  return authorityServiceHost({ ...(configEnv ?? {}), ...env });
 };
 
 export const ensureEmbeddedAuthority = async (
   input: EnsureEmbeddedAuthorityInput
 ): Promise<EmbeddedAuthorityHandle> => {
-  const authorityId = await resolveAuthorityId(input.dataDir);
-  const port = input.port ?? await resolveEmbeddedAuthorityPort(input.dataDir);
+  const environment = input.environment ?? process.env;
+  const port = input.port ?? await resolveEmbeddedAuthorityPort(input.dataDir, environment);
   const url = `http://127.0.0.1:${port}`;
-  let existing = await probeEmbeddedAuthority(url, authorityId, Boolean(input.authToken));
-  if (existing) {
-    return {
-      url,
-      authorityId,
-      buildId: input.buildId,
-      authToken: input.authToken,
-      replacementExpected: Boolean(existing.build && existing.build !== input.buildId),
-      startedByCaller: false,
-      serverInstanceId: requireServerInstanceId(existing)
-    };
-  }
-  if (await isTcpPortListening("127.0.0.1", port)) {
-    existing = await probeEmbeddedAuthorityWithRetry(
-      url,
-      authorityId,
-      Boolean(input.authToken)
-    );
-    if (existing) {
-      return {
+  const deadline = Date.now() + positiveStartupTimeout(input.startupTimeoutMs);
+  const lock = await acquireAuthorityStartupLock(input.dataDir, port, deadline);
+  try {
+    const authorityId = await resolveAuthorityId(input.dataDir);
+    const host = input.host ?? await resolveEmbeddedAuthorityHost(input.dataDir, environment);
+    input = { ...input, host, requireHost: input.requireHost ?? Boolean(
+      input.host !== undefined || environment.CODEX_HUB_HOST?.trim() || environment.CODEX_HUB_AUTHORITY_HOST?.trim()
+    ) };
+    let existing = await probeEmbeddedAuthority(url, authorityId, Boolean(input.authToken), input.authToken);
+    if (existing) return authorityHandle(input, url, authorityId, existing, false);
+    if (await isTcpPortListening("127.0.0.1", port)) {
+      existing = await probeEmbeddedAuthorityWithRetry(
         url,
         authorityId,
-        buildId: input.buildId,
-        authToken: input.authToken,
-        replacementExpected: Boolean(existing.build && existing.build !== input.buildId),
-        startedByCaller: false,
-        serverInstanceId: requireServerInstanceId(existing)
-      };
+        Boolean(input.authToken),
+        { authToken: input.authToken }
+      );
+      if (existing) return authorityHandle(input, url, authorityId, existing, false);
+      throw new Error(`Authority port is occupied by a non-responsive service: ${url}`);
     }
-    throw new Error(`Authority port is occupied by a non-responsive service: ${url}`);
+    const nodeRuntime = await resolveAuthorityNode(environment);
+    const child = await startDetachedAuthority(input, authorityId, port, nodeRuntime);
+    try {
+      const health = await waitForEmbeddedAuthority(
+        url,
+        authorityId,
+        Boolean(input.authToken),
+        Math.max(1, deadline - Date.now()),
+        input.authToken
+      );
+      return { ...authorityHandle(input, url, authorityId, health, true), pid: child.pid };
+    } catch (error) {
+      await stopDetachedAuthority(child.pid);
+      throw await authorityStartupError(error, input.dataDir, input.authToken);
+    }
+  } finally {
+    await lock.release();
   }
-  const nodeRuntime = await resolveAuthorityNode(input.environment ?? process.env);
-  const child = await startDetachedAuthority(input, authorityId, port, nodeRuntime);
-  const health = await waitForEmbeddedAuthority(url, authorityId, Boolean(input.authToken));
+};
+
+const authorityHandle = (
+  input: EnsureEmbeddedAuthorityInput,
+  url: string,
+  authorityId: string,
+  health: HealthPayload,
+  startedByCaller: boolean
+): EmbeddedAuthorityHandle => {
+  if (health.port !== Number(new URL(url).port || 80)) throw new Error(`Authority listen port mismatch on ${url}.`);
+  if (health.configPath !== path.join(path.resolve(input.dataDir), "config.yaml")) {
+    throw new Error(`Authority profile mismatch on ${url}: config directory differs.`);
+  }
+  const environment = input.environment ?? process.env;
+  if (environment.CODEX_HUB_LOCAL_MACHINE !== undefined
+    && health.features?.localMachine !== readBooleanEnv(environment, "CODEX_HUB_LOCAL_MACHINE", true)) {
+    throw new Error(`Authority local machine configuration mismatch on ${url}.`);
+  }
+  if (input.requireHost && health.host !== input.host) throw new Error(`Authority listen host mismatch on ${url}.`);
+  if (input.requireStaticDirectory && health.staticDirectory !== path.resolve(input.staticDirectory)) {
+    throw new Error(`Authority static directory mismatch on ${url}.`);
+  }
+  for (const [key, value] of Object.entries(input.appServerLaunch ?? {})) {
+    if (value !== undefined && health.appServerLaunch?.[key as keyof CodexAppServerLaunchOptions] !== value) {
+      throw new Error(`Authority app-server ${key} differs; restart with the requested configuration.`);
+    }
+  }
   return {
     url,
     authorityId,
     buildId: input.buildId,
     authToken: input.authToken,
-    startedByCaller: true,
-    pid: child.pid,
-    serverInstanceId: requireServerInstanceId(health)
+    replacementExpected: Boolean(health.build && health.build !== input.buildId),
+    startedByCaller,
+    serverInstanceId: requireServerInstanceId(health),
+    localMachineEnabled: health.features?.localMachine !== false
   };
 };
 
@@ -448,11 +492,15 @@ const requireServerInstanceId = (health: HealthPayload) => {
 export const probeEmbeddedAuthority = async (
   url: string,
   authorityId: string,
-  expectedAuthRequired: boolean
+  expectedAuthRequired: boolean,
+  authToken?: string
 ): Promise<HealthPayload | null> => {
   let response: Response;
   try {
-    response = await fetch(new URL("/api/health", url), { signal: AbortSignal.timeout(1_000) });
+    response = await fetch(new URL("/api/health", url), {
+      headers: authToken ? { authorization: `Bearer ${authToken}` } : undefined,
+      signal: AbortSignal.timeout(1_000)
+    });
   } catch {
     return null;
   }
@@ -463,11 +511,17 @@ export const probeEmbeddedAuthority = async (
   } catch {
     throw new Error(`Authority port is occupied by a non-CodexHub service: ${url}`);
   }
+  if (health?.ok !== true || typeof health.version !== "string" || !health.version.trim()) {
+    throw new Error(`Authority port is occupied by a non-CodexHub service: ${url}`);
+  }
   if (!health.authority) throw new Error(`Authority port is occupied by a non-authority CodexHub service: ${url}`);
   if (health.authRequired !== expectedAuthRequired) {
     const expected = expectedAuthRequired ? "enabled" : "disabled";
     const received = health.authRequired ? "enabled" : "disabled";
     throw new Error(`Authority authentication mode mismatch on ${url}: expected ${expected}, received ${received}.`);
+  }
+  if (expectedAuthRequired && health.authenticated !== true) {
+    throw new Error(`Authority authentication failed on ${url}.`);
   }
   if (health.authority.authorityId !== authorityId) {
     throw new Error(`Authority mismatch on ${url}: expected ${authorityId}, received ${health.authority.authorityId}.`);
@@ -485,12 +539,12 @@ export const probeEmbeddedAuthorityWithRetry = async (
   url: string,
   authorityId: string,
   expectedAuthRequired: boolean,
-  options: { attempts?: number; retryDelayMs?: number } = {}
+  options: { attempts?: number; retryDelayMs?: number; authToken?: string } = {}
 ): Promise<HealthPayload | null> => {
   const attempts = Math.max(1, Math.floor(options.attempts ?? 3));
   const retryDelayMs = Math.max(0, Math.floor(options.retryDelayMs ?? 250));
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const health = await probeEmbeddedAuthority(url, authorityId, expectedAuthRequired);
+    const health = await probeEmbeddedAuthority(url, authorityId, expectedAuthRequired, options.authToken);
     if (health) return health;
     if (attempt + 1 < attempts && retryDelayMs > 0) await delay(retryDelayMs);
   }
@@ -501,11 +555,12 @@ export const waitForEmbeddedAuthority = async (
   url: string,
   authorityId: string,
   expectedAuthRequired: boolean,
-  timeoutMs = 20_000
+  timeoutMs = 20_000,
+  authToken?: string
 ) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const health = await probeEmbeddedAuthority(url, authorityId, expectedAuthRequired);
+    const health = await probeEmbeddedAuthority(url, authorityId, expectedAuthRequired, authToken);
     if (health) return health;
     await delay(200);
   }
@@ -518,13 +573,15 @@ const startDetachedAuthority = async (
   port: number,
   nodeRuntime: AuthorityNodeRuntime
 ) => {
-  await Promise.all([stat(input.authorityServicePath), stat(input.staticDirectory)]);
+  await stat(input.authorityServicePath);
   await mkdir(input.dataDir, { recursive: true });
   const logPath = path.join(input.dataDir, input.logFileName ?? "authority.log");
   const logFd = openSync(logPath, "a", 0o600);
   try {
     const args = [
-      input.authorityServicePath,
+      ...(input.serviceCommand ?? [input.authorityServicePath]),
+      ...(input.host ? ["--host", input.host] : []),
+      ...authorityLaunchArgs(input.appServerLaunch),
       "--port", String(port),
       "--authority-id", authorityId,
       "--authority-kind", authorityKind(),
@@ -535,7 +592,7 @@ const startDetachedAuthority = async (
       ...(input.projectCatalog ? ["--project-catalog", input.projectCatalog] : []),
       ...(input.authToken ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])
     ];
-    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    const childEnv: NodeJS.ProcessEnv = { ...(input.environment ?? process.env), CODEX_HUB_DATA_DIR: input.dataDir };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     if (input.runAsElectronNode && nodeRuntime.source === "host-fallback") {
       childEnv.ELECTRON_RUN_AS_NODE = "1";
@@ -570,6 +627,94 @@ const startDetachedAuthority = async (
   }
 };
 
+const positiveStartupTimeout = (value: number | undefined) => {
+  if (value === undefined) return 30_000;
+  if (!Number.isFinite(value) || value <= 0) throw new Error("Authority startup timeout must be greater than 0.");
+  return Math.floor(value);
+};
+
+const acquireAuthorityStartupLock = async (dataDir: string, port: number, deadline: number) => {
+  await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  const lockPath = path.join(dataDir, `authority-${port}.lock`);
+  const token = randomUUID();
+  while (Date.now() < deadline) {
+    try {
+      const handle = await openFile(lockPath, "wx", 0o600);
+      try {
+        await handle.writeFile(JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString() }));
+      } catch (error) {
+        await handle.close().catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
+        throw error;
+      }
+      return {
+        release: async () => {
+          await handle.close().catch(() => undefined);
+          try {
+            const current = JSON.parse(await readFile(lockPath, "utf8")) as { token?: string };
+            if (current.token !== token) return;
+          } catch {
+            return;
+          }
+          await unlink(lockPath).catch(() => undefined);
+        }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await removeDeadAuthorityStartupLock(lockPath)) continue;
+      await delay(100);
+    }
+  }
+  throw new Error(`Timed out waiting for the CodexHub authority startup lock for port ${port}.`);
+};
+
+const removeDeadAuthorityStartupLock = async (lockPath: string) => {
+  let info;
+  try {
+    info = await stat(lockPath);
+  } catch {
+    return true;
+  }
+  let record: { pid?: number };
+  try {
+    record = JSON.parse(await readFile(lockPath, "utf8")) as { pid?: number };
+  } catch {
+    if (Date.now() - info.mtimeMs < 30_000) return false;
+    await unlinkIfUnchanged(lockPath, info.mtimeMs, info.size);
+    return true;
+  }
+  if (typeof record.pid === "number") {
+    try {
+      process.kill(record.pid, 0);
+      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return false;
+      // The owner is gone; the lock can be reclaimed.
+    }
+  }
+  await unlinkIfUnchanged(lockPath, info.mtimeMs, info.size);
+  return true;
+};
+
+const unlinkIfUnchanged = async (lockPath: string, mtimeMs: number, size: number) => {
+  try {
+    const current = await stat(lockPath);
+    if (current.mtimeMs !== mtimeMs || current.size !== size) return false;
+    await unlink(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const stopDetachedAuthority = async (pid: number | undefined) => {
+  if (!pid || pid === process.pid) return;
+  try { process.kill(pid, "SIGTERM"); } catch { return; }
+  await delay(500);
+  try { process.kill(pid, 0); } catch { return; }
+  try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ }
+};
+
 const isTcpPortListening = async (host: string, port: number) => await new Promise<boolean>((resolve) => {
   const socket = net.createConnection({ host, port });
   const finish = (listening: boolean) => {
@@ -584,3 +729,34 @@ const isTcpPortListening = async (host: string, port: number) => await new Promi
 });
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+const authorityLaunchArgs = (options: CodexAppServerLaunchOptions = {}) => [
+  ...(options.approvalPolicy ? ["--approval-policy", options.approvalPolicy] : []),
+  ...(options.approvalsReviewer ? ["--approvals-reviewer", options.approvalsReviewer] : []),
+  ...(options.sandbox ? ["--sandbox", options.sandbox] : [])
+];
+
+/** Failure cleanup only owns the generation spawned by this bootstrap call. */
+export const cleanupFailedAuthorityStartup = async (handle: EmbeddedAuthorityHandle) => {
+  if (!handle.startedByCaller || !handle.pid) return;
+  const health = await probeEmbeddedAuthority(handle.url, handle.authorityId, Boolean(handle.authToken), handle.authToken);
+  if (health && health.serverInstanceId !== handle.serverInstanceId) return;
+  await stopDetachedAuthority(handle.pid);
+};
+
+export const authorityStartupError = async (error: unknown, dataDir: string, authToken: string) => {
+  let message = error instanceof Error ? error.message : String(error);
+  const file = await openFile(path.join(dataDir, "authority.log"), "r").catch(() => null);
+  if (file) {
+    try {
+      const info = await file.stat();
+      const buffer = Buffer.alloc(Math.min(info.size, 4000));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, Math.max(0, info.size - buffer.length));
+      if (bytesRead) message += `\nRecent local server log:\n${buffer.subarray(0, bytesRead).toString("utf8")}`;
+    } finally { await file.close(); }
+  }
+  const secrets = [authToken, ...Object.entries(process.env)
+    .filter(([key]) => /TOKEN|PASSWORD|SECRET/i.test(key)).map(([, value]) => value ?? "")];
+  for (const secret of secrets) if (secret) message = message.split(secret).join("[REDACTED]");
+  return new Error(message);
+};

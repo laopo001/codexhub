@@ -1,3 +1,4 @@
+import { authorityServicePort } from "../../src/shared/surfaceTypes.js";
 import { Telegraf } from "telegraf";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,7 +48,7 @@ export type TelegramBotHandle = {
 };
 
 let bot: Telegraf;
-let apiBaseUrl = "http://127.0.0.1:8788";
+let apiBaseUrl = "";
 let apiAuthToken: string | null = null;
 let allowedChatIds = new Set<number>();
 let logger: Pick<Console, "error" | "log"> = console;
@@ -534,7 +535,7 @@ export const startTelegramBot = async (options: TelegramBotOptions): Promise<Tel
   if (startedBot) return startedBot;
   const currentBot = new Telegraf(options.token);
   bot = currentBot;
-  apiBaseUrl = options.apiBaseUrl ?? "http://127.0.0.1:8788";
+  apiBaseUrl = options.apiBaseUrl ?? `http://127.0.0.1:${authorityServicePort()}`;
   apiAuthToken = options.apiAuthToken ?? process.env.CODEX_HUB_AUTH_TOKEN?.trim() ?? null;
   apiClient = createCodexHubApiClient({ baseUrl: apiBaseUrl, authToken: () => apiAuthToken });
   allowedChatIds = options.allowedChatIds ?? new Set<number>();

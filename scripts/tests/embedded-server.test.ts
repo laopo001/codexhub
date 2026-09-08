@@ -31,6 +31,12 @@ test("VSCode authority ports match across desktop hosts and reserve WSL plus one
 
 test("embedded clients can use an explicit authority port for isolated development", () => {
   assert.equal(authorityServicePort({ CODEX_HUB_AUTHORITY_PORT: "30123" }, "linux"), 30_123);
+  assert.equal(authorityServicePort({ CODEX_HUB_PORT: "30124" }, "linux"), 30_124);
+  assert.equal(authorityServicePort({ CODEX_HUB_PORT: "30125", CODEX_HUB_AUTHORITY_PORT: "30125" }, "linux"), 30_125);
+  assert.throws(
+    () => authorityServicePort({ CODEX_HUB_PORT: "30125", CODEX_HUB_AUTHORITY_PORT: "30126" }, "linux"),
+    /must match/
+  );
   assert.throws(
     () => authorityServicePort({ CODEX_HUB_AUTHORITY_PORT: "not-a-port" }, "linux"),
     /Invalid CODEX_HUB_AUTHORITY_PORT/

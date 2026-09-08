@@ -30,6 +30,9 @@ finish_deploy() {
     if [[ $PM2_SNAPSHOT_SAVED -eq 1 ]]; then
       pm2 delete codexhub-prod >/dev/null 2>&1 || true
       pm2 resurrect >/dev/null 2>&1 || true
+      if [[ -n "${PROD_URL:-}" ]]; then
+        CODEX_HUB_PROD_URL="$PROD_URL" pnpm exec tsx scripts/restart-production-authority.ts || echo "Authority rollback verification failed." >&2
+      fi
     fi
   fi
   rm -rf "$ARTIFACT_BACKUP_DIR"
@@ -58,7 +61,7 @@ if [[ -z "$CODEX_HUB_BUILD_ID" ]]; then
 fi
 
 PROD_PORT="$(
-  node --input-type=module -e 'import { loadDotEnv } from "./dist-node/src/core/dotenv.js"; await loadDotEnv(); console.log(process.env.CODEX_HUB_PORT ?? "8788");'
+  node --input-type=module -e 'import { loadDotEnv } from "./dist-node/src/core/dotenv.js"; import { loadConfig } from "./dist-node/src/core/config.js"; import { codexHubDataDirectory } from "./dist-node/src/core/authorityPaths.js"; import { readAndApplyServerConfigEnv } from "./dist-node/src/core/serverConfigEnv.js"; import path from "node:path"; await loadDotEnv(); await readAndApplyServerConfigEnv(path.join(codexHubDataDirectory(), "config.yaml")); console.log(loadConfig().port);'
 )"
 PROD_URL="http://127.0.0.1:${PROD_PORT}"
 
@@ -97,21 +100,8 @@ else
   pm2 startOrRestart ecosystem.config.cjs --only codexhub-prod --update-env
 fi
 
-for _ in {1..30}; do
-  if curl -fsS "${PROD_URL}/api/health" >/tmp/codexhub-prod-health.json; then
-    break
-  fi
-  sleep 1
-done
-
-curl -fsS "${PROD_URL}/api/health" >/tmp/codexhub-prod-health.json
-curl -fsS "${PROD_URL}/" >/tmp/codexhub-prod-index.html
-
-ACTUAL_BUILD_ID="$(node -e 'const fs = require("node:fs"); const value = JSON.parse(fs.readFileSync("/tmp/codexhub-prod-health.json", "utf8")); process.stdout.write(value.build ?? "");')"
-if [[ "$ACTUAL_BUILD_ID" != "$CODEX_HUB_BUILD_ID" ]]; then
-  echo "CodexHub production build mismatch: expected ${CODEX_HUB_BUILD_ID}, got ${ACTUAL_BUILD_ID:-<empty>}." >&2
-  exit 1
-fi
+# PM2 manages the foreground client; the authority owns the actual service generation.
+CODEX_HUB_PROD_URL="$PROD_URL" pnpm exec tsx scripts/restart-production-authority.ts
 
 pm2 save
 DEPLOY_SUCCEEDED=1

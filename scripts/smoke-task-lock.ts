@@ -381,10 +381,17 @@ const main = async () => {
     const activeWebTurn = await fake.nextTurn();
     const activeWebTurnId = activeWebTurn.turnId;
     if (!activeWebTurnId) throw new Error(`active web turn missing turnId: ${JSON.stringify(activeWebTurn)}`);
-    const beforeSteerDetail = await apiJson<ThreadDetail>(
+    let beforeSteerDetail = await apiJson<ThreadDetail>(
       apiBase,
       `/api/threads/${encodeURIComponent(fake.threadId)}`
     );
+    // The fake command queue is populated before its app-server event reaches HTTP projection.
+    const activeTurnDeadline = Date.now() + 5_000;
+    while ((!beforeSteerDetail.running || beforeSteerDetail.status !== "running"
+      || beforeSteerDetail.activeTurnId !== activeWebTurnId) && Date.now() < activeTurnDeadline) {
+      await delay(25);
+      beforeSteerDetail = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(fake.threadId)}`);
+    }
     if (
       !beforeSteerDetail.running
       || beforeSteerDetail.status !== "running"

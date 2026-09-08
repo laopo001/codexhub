@@ -1,3 +1,4 @@
+import { authorityServiceHost, authorityServicePort } from "../shared/surfaceTypes.js";
 import type { ThreadOptions } from "../shared/usageTypes.js";
 
 export type ProxyConfig = {
@@ -13,16 +14,8 @@ export type ProxyConfigOverrides = {
 
 export const loadConfig = (overrides: ProxyConfigOverrides = {}): ProxyConfig => {
   return {
-    host: overrides.host ?? process.env.CODEX_HUB_HOST ?? "0.0.0.0",
-    port: overrides.port ?? parsePort(process.env.CODEX_HUB_PORT ?? "8788"),
+    host: authorityServiceHost(process.env, overrides.host),
+    port: authorityServicePort(process.env, process.platform, overrides.port),
     defaultThreadOptions: {}
   };
-};
-
-const parsePort = (value: string) => {
-  const port = Number(value);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error(`Invalid CODEX_HUB_PORT: ${value}`);
-  }
-  return port;
 };

@@ -32,11 +32,14 @@ Vite 会把 `/api` 代理到开发 API。需要单独启动时使用 `pnpm run d
 
 ## 生产/本地 server
 
-`codexhub server` 是生产和普通本地 API server 的启动入口，会固定读取当前目录的 `.env`。`CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写在 `.env` 或 `config.yaml` 的 `env` 字段里，也可以用 CLI 覆盖；优先级是 CLI 参数 > 当前 shell 环境变量 > `.env` > `config.yaml` 的 `env` > 内置默认值。
+`codexhub server` 是共享本机 authority 的前台管理入口，会读取当前目录的 `.env`。首次启动 detached authority，后续调用复用同一服务并通过 client heartbeat 保活；退出前台命令只结束管理连接，活跃窗口和任务继续运行。`CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写在 `.env` 或 `config.yaml` 的 `env` 字段里，也可以用 CLI 覆盖；优先级是 CLI 参数 > 当前 shell 环境变量 > `.env` > `config.yaml` 的 `env` > 内置默认值。
 
-默认监听 `0.0.0.0:8788`，本机访问入口：
+CLI、VSCode 和 Electron 在同一执行环境中共用一个 authority、配置目录和 local runtime。默认只监听 loopback：
 
-- Web/API: `http://127.0.0.1:8788`
+- Windows/macOS/普通 Linux：`http://127.0.0.1:28788`
+- WSL：`http://127.0.0.1:28789`
+
+下文 URL 示例使用普通系统端口 `28788`；在 WSL 中请使用 `28789`，显式自定义端口时使用实际配置值。升级不会自动迁移或重启已运行的旧服务；原来的显式 `CODEX_HUB_PORT=8788` 仍有效。
 
 ### 浏览器安装（PWA）
 
@@ -53,7 +56,7 @@ CODEX_HUB_LOCAL_MACHINE=0 pnpm codexhub server
 也可以直接指定监听地址：
 
 ```bash
-pnpm codexhub server --host 0.0.0.0 --port 8788
+pnpm codexhub server --host 0.0.0.0 --port 28788
 ```
 
 CodexHub 启动官方 `codex app-server` 时会先解析 Codex CLI：优先使用 `CODEX_HUB_CODEX_CLI`，再查找 `PATH`、常见 npm/pnpm 全局 bin 目录；Windows 下会识别 `codex.cmd` / `codex.bat` 并通过 `cmd.exe call` 启动。app-server ready 检查默认等待 60 秒，可用 `CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 调整；启动失败时错误会带上最近的 app-server stderr 尾部，方便定位 Codex CLI 或登录环境问题。
@@ -67,26 +70,28 @@ CodexHub 不读取或注入 Codex 私有的 `models_cache.json` / `model_catalog
 codexhub server
 
 # 在另一个终端，把子机已有后端注册到父机
-codexhub register --to http://parent-host:8788
+codexhub register --to http://parent-host:28788
 
 # 子机后端使用非默认地址时，--connect 指定子机，--to 指定父机
-codexhub --connect http://127.0.0.1:8789 register --to http://parent-host:8788
+codexhub --connect http://127.0.0.1:28790 register --to http://parent-host:28788
 
 # 启动后立即注册的快捷入口
-codexhub server --register-to http://parent-host:8788
+codexhub server --register-to http://parent-host:28788
 ```
 
 `register` 调用子机已有后端的 `/api/registered/parent` 后退出，不启动后端或第二套 app server。子机必须启用 local machine；后端未启动或 local machine 被禁用时明确报错。它与 Web 的 Connections / Registered 面板共用注册入口，由子机后端维持连接和断线重连。
 
-本机后端地址沿用 CLI 的全局 `--connect` / `CODEX_HUB_SERVER_URL` 设置，默认是 `http://127.0.0.1:8788`。注册 VSCode/Electron 已有的共享 authority 时，应显式指定该 authority 地址（默认 Windows/macOS/Linux 为 `28788`，WSL 为 `28789`），不会自动启动或切换另一个后端。
+本机后端地址沿用 CLI 的全局 `--connect` / `CODEX_HUB_SERVER_URL` 设置；未显式设置时使用共享 authority 地址（Windows/macOS/Linux 默认 `28788`，WSL 默认 `28789`，可用 `CODEX_HUB_PORT` 覆盖）。`register` 连接已有后端，不会自动启动或切换另一个后端。
+
+共享 authority 的注册 machine ID 和名称由 authority identity 决定，CLI 的旧 `--register-machine-id` / `--register-name` 提示不会覆盖它；`server` 注册时会输出实际 identity，避免不同入口改变同一台机器的身份。
 
 子机通过主动建立的 WebSocket 接入父机，无需开放子机后端或 app-server 的入站端口。父机发送 CodexHub 命令并订阅事件；子机后端统一处理本地 UI 和父机请求，管理同一个 local runtime。父机不为这条后端注册连接建立 app-server 协议客户端。取消注册或父机失联只释放远程连接与订阅，不关闭子机 runtime 或中断本地执行。thread transcript 的最终来源仍是官方 app server。
 
 父机只接入子机的本机执行能力，不导入子机其它远端 machines、tasks 或 config。它把子机显示为动态 `registered` machine，不把该 machine 写入父机 `config.yaml`；在线时显示 success message，断线时显示 warning message 并移除在线 machine。首次加载已有连接不补弹提示。父机上的 machine identity 与子机 local identity 在注册边界映射，project identity 仍是各自 authority 下的 `machineId + path`。文件与目录操作始终由子机执行。
 
-父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。token 完全可选，父 server 没有启用 `CODEX_HUB_AUTH_TOKEN` 时可以直接用空 token 注册测试。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、普通 server 的 machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。VSCode 同一执行 authority 的所有窗口共享父 URL、可选 token 和一条由 authority ID 派生的稳定 machine transport；Windows、WSL、Remote SSH 等不同 authority 各自注册为独立 machine。Disconnect 会中止正在握手或已在线的 WebSocket、等待 runner 完全退出，并删除自动注册配置。父机 token 优先级为 `register --auth-token`、Register URL 中的 `?codexhub_token=`、`CODEX_HUB_REGISTER_AUTH_TOKEN`；显式空 token 表示不使用父机认证。本机 API 请求使用 `CODEX_HUB_AUTH_TOKEN`，与父机 token 分开。`register` 与 GUI 一样保存注册配置；`server --register-auth-token` 及启动时环境 override 只作用于当前进程，不覆盖已保存的配置。连接错误和状态只显示去除 query/userinfo 的目标 URL，不记录或投影 token。
+父 server Web 左下角会显示可一键复制的 Register URL；如果当前浏览器已经保存父 server auth token，它会生成 `http://host:port?codexhub_token=...`，否则就是不带 token 的 base URL。token 完全可选，父 server 没有启用 `CODEX_HUB_AUTH_TOKEN` 时可以直接用空 token 注册测试。已经打开远端 server 的 Web UI 时，可以在 Connections / Registered 里把这个 Register URL 粘贴到唯一的 Parent register URL 输入框并 Connect。连接成功发起后，子 server 会把规范化后的父 URL、普通 server 的 machine identity 和可选 CodexHub auth token 保存在自身 `config.yaml` 的 `parentRegistration` 中；普通 Web、VSCode、Electron 下次启动都由共享 `startServer()` 自动恢复并继续断线重连。VSCode 同一执行 authority 的所有窗口共享父 URL、可选 token 和一条由 authority ID 派生的稳定 machine transport；Windows、WSL、Remote SSH 等不同 authority 各自注册为独立 machine。Disconnect 会中止正在握手或已在线的 WebSocket、等待 runner 完全退出，并删除自动注册配置。父机 token 优先级为 `register --auth-token`、Register URL 中的 `?codexhub_token=`、`CODEX_HUB_REGISTER_AUTH_TOKEN`；显式空 token 表示不使用父机认证。本机 API 请求使用 `CODEX_HUB_AUTH_TOKEN`，与父机 token 分开。`register` 与 GUI 一样保存注册配置；`server --register-to` 现在也通过同一个注册 API 保存共享 parent profile，显式 token 会随该 profile 保存。连接错误和状态只显示去除 query/userinfo 的目标 URL，不记录或投影 token。
 
-CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:8789` 注册到 `127.0.0.1:8788` 是允许的。
+CodexHub 会拒绝把一个 server 注册到它自己：同一本机地址且同端口会直接返回错误，目标 `/api/health` 的 `serverInstanceId` 与当前实例相同也会被拒绝。为了本机测试，同一台电脑上不同端口的多个 server 可以互相注册，例如 `127.0.0.1:28790` 注册到 `127.0.0.1:28788` 是允许的。
 
 需要独立运行轻量 machine 时，仍可使用 `codexhub machine --type registered`。如果远端不想预装或升级 CodexHub，`/api/registered/bootstrap` 仍会下载 remote client 后以 registered tunnel 模式连回。这两种模式自行管理 app server，与复用已有后端的 `register` 不同；SSH 模式保持原有行为。
 
@@ -128,11 +133,10 @@ config:
     showDesktopPet: false
     taskCompleteSystemNotifications: false
 env:
-  CODEX_HUB_HOST: "0.0.0.0"
-  CODEX_HUB_PORT: "8788"
-  # Embedded authority defaults to loopback; use 0.0.0.0 only when LAN access is intentional.
-  # CODEX_HUB_AUTHORITY_HOST: "0.0.0.0"
-  CODEX_HUB_AUTHORITY_PORT: "28788"
+  CODEX_HUB_HOST: "127.0.0.1"
+  # 默认 Windows/macOS/Linux 为 28788，WSL 为 28789；需要覆盖时再设置。
+  # CODEX_HUB_PORT: "28788"
+  # 局域网访问需显式设置 CODEX_HUB_HOST: "0.0.0.0" 或 "::"。
   CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS: "60000"
   CODEX_HUB_SSH_AUTOCONNECT: "1"
   CODEX_HUB_PLUGIN_DIRS: "/home/laop/.local/share/codexhub/plugins"
@@ -163,15 +167,15 @@ codexhub send <threadId> "补充测试" --wait
 codexhub send <threadId> "继续测试" --stream
 
 # 连接另一台 CodexHub 后端；cwd 是目标 machine 上的路径
-codexhub --connect http://remote-host:8788 start "分析这个项目" --name "远程分析" --cwd /srv/project
-codexhub --connect http://remote-host:8788 send <threadId> "继续分析"
+codexhub --connect http://remote-host:28788 start "分析这个项目" --name "远程分析" --cwd /srv/project
+codexhub --connect http://remote-host:28788 send <threadId> "继续分析"
 ```
 
 `--connect` 是首选连接参数，`--server` 保留为兼容别名；两者显式指定不同地址时会报错。后端地址也可通过 `CODEX_HUB_SERVER_URL` 设置；后端启用认证时使用 `CODEX_HUB_AUTH_TOKEN`。
 
 默认选择目标后端的在线 local machine，显式 `--machine <machineId>` 可以选择其 SSH 或 registered machine。CLI 中的会话就是现有 `thread`，复用同一个 machine runtime。
 
-`start` 默认等待本次提交执行完成；`send` 默认只等待后端接受投递，使用 `--wait` 才等待最终结果，使用 `--stream` 才实时输出 canonical records。`--no-wait` 仍可显式请求投递确认，但不能与 `--wait` 或 `--stream` 混用；Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动默认本地 server（默认 loopback 的 `8788`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
+`start` 默认等待本次提交执行完成；`send` 默认只等待后端接受投递，使用 `--wait` 才等待最终结果，使用 `--stream` 才实时输出 canonical records。`--no-wait` 仍可显式请求投递确认，但不能与 `--wait` 或 `--stream` 混用；Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动与 VSCode/Electron 相同的本机 authority（默认 loopback 的 `28788`，WSL 为 `28789`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
 
 `--wait` 和 `--stream` 等待模式需要更新后的后端支持 `POST /api/threads/:threadId/turn?wait=true`；`--timeout <秒>` 可调整等待上限，`--json` 输出适合脚本读取的结果。
 
@@ -182,21 +186,21 @@ codexhub --connect http://remote-host:8788 send <threadId> "继续分析"
 需要在终端实时观察执行时，使用 `--stream`，保留 `[commentary]`、`[final_answer]`，用 `[tool_call]` 显示工具名与关键参数，用 `[tool_result]` 显示完成状态和已有耗时。成功结果正文隐藏，长参数与失败诊断截断，等待期间不追加心跳。`--json` 仍是完成后的单个 JSON 结果，与 `--stream` 分开使用。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
 
 ```bash
-codexhub --connect http://host:8788 start "检查项目结构" \
+codexhub --connect http://host:28788 start "检查项目结构" \
   --name "Luna 项目检查" --cwd /srv/project \
   --model gpt-5.6-luna --effort xhigh --stream
 
 # 输入为 - 时从 stdin 读取完整任务
-cat task.txt | codexhub --connect http://host:8788 send <threadId> - --stream
+cat task.txt | codexhub --connect http://host:28788 send <threadId> - --stream
 ```
 
 已安装的 `delegate-to-codex` skill 仍提供委派约定说明；实际命令直接使用 CodexHub：
 
 ```bash
-codexhub --connect http://host:8788 start "检查注册流程并补充测试" \
+codexhub --connect http://host:28788 start "检查注册流程并补充测试" \
   --name "Luna 注册流程检查" --cwd /srv/project \
   --model gpt-5.6-luna --effort xhigh
-codexhub --connect http://host:8788 send <threadId> "先处理测试失败" --wait --cwd /srv/project
+codexhub --connect http://host:28788 send <threadId> "先处理测试失败" --wait --cwd /srv/project
 ```
 
 不配置地址时，本地任务只需要：
@@ -209,7 +213,7 @@ codexhub start "检查当前项目" --name "Luna 检查" \
 也可以设置默认后端，省略每次的 `--connect`：
 
 ```bash
-export CODEX_HUB_SERVER_URL="http://host:8788"
+export CODEX_HUB_SERVER_URL="http://host:28788"
 codexhub start "检查项目" --name "Luna 检查" --cwd /srv/project \
   --model gpt-5.6-luna --effort xhigh
 codexhub send <threadId> "继续检查" --wait --cwd /srv/project
@@ -265,7 +269,7 @@ pnpm run dev:api
 本地定时任务由本机 server 记录和调度，不写入远端 workspace。任务选择一台 machine、一个 project path、可选 thread，并按 cron schedule 向该 thread 投递一轮对话；第一次没有 `threadId` 时会使用打开 project 后返回的新/复用 thread，并写回 task 状态。
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8788/api/tasks \
+curl -sS -X POST http://127.0.0.1:28788/api/tasks \
   -H 'content-type: application/json' \
   -d '{
     "name": "daily-summary",
@@ -276,8 +280,8 @@ curl -sS -X POST http://127.0.0.1:8788/api/tasks \
     "input": "检查这个项目昨天到今天的变更，给我总结风险和下一步。"
   }'
 
-curl -sS http://127.0.0.1:8788/api/tasks
-curl -sS -X POST http://127.0.0.1:8788/api/tasks/<taskId>/run
+curl -sS http://127.0.0.1:28788/api/tasks
+curl -sS -X POST http://127.0.0.1:28788/api/tasks/<taskId>/run
 ```
 
 CLI 也操作同一份 server-local task 状态：
@@ -367,7 +371,7 @@ contributes:
 可用 API：
 
 ```bash
-curl -sS http://127.0.0.1:8788/api/plugins
+curl -sS http://127.0.0.1:28788/api/plugins
 ```
 
 SSH 继续保留为 machine transport 类型；Telegram 是内建 integration plugin；主题/CSS 是 Web contribution plugin。三者共享插件清单和 contribution 视图，但不强行共享同一套运行时生命周期。
@@ -407,9 +411,9 @@ pnpm run publish:prod
 长期进程：
 
 - `codexhub-prod`: 端口跟随 `.env` 里的 `CODEX_HUB_PORT`
-- Telegram bot 内置在 `codexhub-prod`，由同一个 server 进程启动
+- Telegram bot 内置在共享 authority，由实际 server 进程启动
 
-发布脚本会先备份当前生产产物，再运行 `pnpm check` 和 `pnpm build`，用 `v<version>+<git-sha>[.dirty]` 注入非空 `CODEX_HUB_BUILD_ID`，然后通过 PM2 的仓库 `bin/codexhub` 入口启动或重启 `codexhub-prod`，最后检查 `/api/health`、build ID 和 `/`。任一步失败会恢复先前的 `dist`、`dist-node` 和 PM2 进程快照。
+发布脚本会先备份当前生产产物，再运行 `pnpm check` 和 `pnpm build`，记录 `v<version>+<git-sha>[.dirty]` 发布标识，通过 PM2 的仓库 `bin/codexhub` 入口启动或重启管理客户端，然后显式调用 authority 的 `/api/restart` 激活当前产物。验证检查 authority ID、配置目录、认证、服务 bundle 与 Web 入口的 build 指纹，以及 `/`。失败时恢复先前的 `dist`、`dist-node` 和 PM2 进程快照，并请求 authority 切回恢复的产物。单独 `pm2 restart` 只重连管理客户端；更新实际服务请使用发布流程或 Settings 中的 Restart CodexHub。
 
 `main` push 的 CI 全部通过后，`Deploy Production` workflow 会进入 GitHub `production` environment，通过专用 SSH key 把 `scripts/deploy-prod-commit.sh` 发送到生产服务器。服务器只检出这次 push 的精确 commit；如果已有更新的 `main`，旧部署会直接跳过。随后服务器安装 lockfile 依赖并调用同一个 `publish:prod`。自动部署需要在 `production` environment 配置 `PROD_HOST`、`PROD_PORT`、`PROD_USER`、`PROD_PATH`、`PROD_SSH_KEY` 和固定主机指纹 `PROD_KNOWN_HOSTS`；不要保存 SSH 密码。
 
@@ -429,7 +433,7 @@ pm2 restart codexhub-prod
 docker build -t codexhub .
 
 docker run --rm \
-  -p 8788:8788 \
+  -p 28788:28788 \
   -v codexhub-data:/data \
   -v "$HOME/.local/share/codexhub/plugins:/plugins:ro" \
   codexhub
@@ -438,7 +442,7 @@ docker run --rm \
 容器默认环境：
 
 - `CODEX_HUB_HOST=0.0.0.0`
-- `CODEX_HUB_PORT=8788`
+- `CODEX_HUB_PORT=28788`
 - `CODEX_HUB_DATA_DIR=/data`
 - `CODEX_HUB_PLUGIN_DIR=/plugins`
 - `CODEX_HUB_LOCAL_MACHINE=0`
@@ -449,7 +453,7 @@ Docker 默认不启动内嵌 `local` machine，因为容器内看到的是容器
 
 ```bash
 docker run --rm \
-  -p 8788:8788 \
+  -p 28788:28788 \
   -v codexhub-data:/data \
   -v "$HOME/.ssh:/root/.ssh:ro" \
   codexhub
@@ -458,23 +462,23 @@ docker run --rm \
 宿主机作为 registered machine 连接容器里的 server：
 
 ```bash
-codexhub server --register-to http://127.0.0.1:8788 --port 8789
+codexhub server --register-to http://127.0.0.1:28788 --port 28790
 ```
 
 ## Electron 和 VSCode
 
-Electron 壳和 VSCode extension 现在按同一个“执行 authority”共享服务，不再各自启动一套 server。Windows host、每个 WSL distro、每个 Remote SSH host/user、Dev Container 分别是独立 authority，各自解析自己的目录并拥有自己的 local machine/runtime；特别是 Windows 与 WSL 始终是两台 parent machine，不能因为 localhost 可互通就合并。
+CLI、Node.js server、Electron 壳和 VSCode extension 按同一个“执行 authority”共享服务。Windows host、每个 WSL distro、每个 Remote SSH host/user、Dev Container 分别是独立 authority，各自解析自己的目录并拥有自己的 local machine/runtime；特别是 Windows 与 WSL 始终是两台 parent machine，不能因为 localhost 可互通就合并。
 
-| extension host 环境 | authority service 端口 |
+| 执行环境 | authority service 默认端口 |
 | --- | ---: |
 | Windows | `28788` |
 | macOS | `28788` |
 | 普通 Linux | `28788` |
 | WSL | `28789` |
 
-WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Windows 共享 localhost 端口空间时避开 Windows 的 `28788`。Remote SSH/Container 在自己的执行环境和网络命名空间中按上表选端口。VSCode 和 Electron authority 默认不读取 `CODEX_HUB_PORT`，也不在占用时顺延；如果固定端口上不是同一个 `authorityId` 和 embedded surface protocol 的 CodexHub 服务，客户端会明确报错。`CODEX_HUB_AUTHORITY_PORT` 可以显式指定隔离开发/测试端口，生产默认不要设置。
+WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Windows 共享 localhost 端口空间时避开 Windows 的 `28788`。Remote SSH/Container 在自己的执行环境和网络命名空间中按上表选端口。所有入口统一读取 `CODEX_HUB_PORT`，不在占用时顺延；如果固定端口上不是同一个 `authorityId` 和 embedded surface protocol 的 CodexHub 服务，客户端会明确报错。`CODEX_HUB_AUTHORITY_PORT` 保留为兼容别名；与 `CODEX_HUB_PORT` 同时设置且值不一致时明确报错。显式 CLI `--port` 优先。
 
-第一个客户端会优先从本地 npm/link 包的 `dist-node/authority-service.cjs` 和 `dist` detached 启动服务；没有可用本地包时才使用 VSIX 或 Electron bundle 内的 `authority-service.cjs`。后续客户端只 probe 并 attach。authority ID、共享 `config.yaml` 和 `authority.log` 位于 `CODEX_HUB_DATA_DIR`（默认 `~/.config/codexhub`）；ID 文件尽可能以 `0600` 创建。authority 默认只监听 `127.0.0.1`，因此可直接打开 `http://127.0.0.1:28788`（WSL 为 `28789`）；明确需要局域网访问时，可在共享 `config.yaml` 的 `env` 设置 `CODEX_HUB_AUTHORITY_HOST: "0.0.0.0"` 或 `"::"`，然后使用执行环境的局域网 IP 和对应端口。只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式设置为非空值时，Web/API/WebSocket 才启用认证；显式 token 只通过子进程环境和窗口请求传递，不放进 service 命令行或日志。旧版生成的 `vscode-authority-token` / `authority-token` 文件会在 authority 下次启动时删除，浏览器发现服务未启用认证时也会清掉同 origin 下的旧 token。普通浏览器、VSCode WebView 和 Electron renderer 中的每个 Web 文档都有独立 `webClientId`，统一调用 `/api/web-clients/heartbeat`，每 10 秒 heartbeat，并在页面恢复可见时立即补发。authority 生命周期只看这些 Web heartbeat：最后一次 Web 通信后连续 5 分钟没有任何 Web client，且没有 running turn，才允许退出；embedded workspace surface 的数量和 register/unregister 不参与 authority 生命周期。VSCode/Electron 的 `surfaceId + leaseId` 仍只管理 workspace transient project，并由 embedded Web 在统一 heartbeat 中附带刷新；VSCode Extension Host 和 Electron main 不再各自维护 heartbeat timer，只处理注册、恢复和正常注销。多个客户端注册的 workspace 会聚合成同一 local machine 的 transient projects；相同路径被多个 surface 引用时保留到最后一个 lease 消失。注册只验证目录，authority machine transport 随后启动 Codex app-server 并通过协议握手；Add Thread 只创建用户 thread。
+第一个客户端会优先从本地 npm/link 包的 `dist-node/authority-service.cjs` 和 `dist` detached 启动服务；没有可用本地包时才使用 VSIX 或 Electron bundle 内的 `authority-service.cjs`。后续客户端只 probe 并 attach。authority ID、共享 `config.yaml` 和 `authority.log` 位于 `CODEX_HUB_DATA_DIR`（默认 `~/.config/codexhub`）；ID 文件尽可能以 `0600` 创建。authority 默认只监听 `127.0.0.1`，因此可直接打开 `http://127.0.0.1:28788`（WSL 为 `28789`）；明确需要局域网访问时，可在共享 `config.yaml` 的 `env` 设置 `CODEX_HUB_HOST: "0.0.0.0"` 或 `"::"`，然后使用执行环境的局域网 IP 和对应端口。只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式设置为非空值时，Web/API/WebSocket 才启用认证；显式 token 只通过子进程环境和窗口请求传递，不放进 service 命令行或日志。旧版生成的 `vscode-authority-token` / `authority-token` 文件会在 authority 下次启动时删除，浏览器发现服务未启用认证时也会清掉同 origin 下的旧 token。普通浏览器、VSCode WebView 和 Electron renderer 中的每个 Web 文档都有独立 `webClientId`，统一调用 `/api/web-clients/heartbeat`，每 10 秒 heartbeat，并在页面恢复可见时立即补发。CLI 操作与前台 `server` 管理连接也使用同一 heartbeat 机制保活。最后一次 client 通信后连续 5 分钟没有任何活跃 client，且没有 running turn，才允许退出；embedded workspace surface 的数量和 register/unregister 不参与 authority 生命周期。VSCode/Electron 的 `surfaceId + leaseId` 仍只管理 workspace transient project，并由 embedded Web 在统一 heartbeat 中附带刷新；VSCode Extension Host 和 Electron main 不再各自维护 heartbeat timer，只处理注册、恢复和正常注销。多个客户端注册的 workspace 会聚合成同一 local machine 的 transient projects；相同路径被多个 surface 引用时保留到最后一个 lease 消失。注册只验证目录，authority machine transport 随后启动 Codex app-server 并通过协议握手；Add Thread 只创建用户 thread。
 
 authority 启动时会先读取当前用户登录 shell 的 `PATH`，并把它与 VSCode/Electron 宿主继承的 `PATH` 合并；因此即使从桌面启动，也可以使用用户通过 nvm、fnm、asdf、npm 或 pnpm 配置的 Node 和 CLI。然后优先使用本地 npm/链接包中的 authority service 和 Web `dist`；如果用户 PATH 中的 `codexhub`/`cxh` 没有指向可用构建，才回退到 VSIX/Electron bundle。Node 运行时优先使用用户 PATH 中满足 Node 20+ 要求的 `node`，最后才回退到 VSCode/Electron 宿主自带的 Node。选择结果和 authority 代码来源会显示在 `/api/health` 的 `authorityRuntime`、`authorityServiceSource` 中。更新本地包或 Node 后重启 authority（Settings → Restart CodexHub），下一个首次启动 authority 的客户端就会使用新版本；VSCode 和 Electron 后续会 attach 到同一个已运行的 authority。npm 是包管理器，不负责替换 Node 本身；通常不需要把 Node 或 CodexHub 的绝对路径写入 `config.yaml`。
 
@@ -534,8 +538,8 @@ sudo apt install wine64 wine32:i386
 
 可选环境变量：
 
-- `CODEX_HUB_AUTHORITY_HOST`: 可选的 embedded authority 监听 host，默认 `127.0.0.1`；只接受 `127.0.0.1`、`0.0.0.0` 或 `::`，使用 wildcard host 前应同时启用 `CODEX_HUB_AUTH_TOKEN`
-- `CODEX_HUB_AUTHORITY_PORT`: 可选的 embedded authority 端口覆盖，主要用于隔离开发/测试；默认按执行环境使用 `28788` 或 WSL 的 `28789`
+- `CODEX_HUB_HOST`: 共享 authority 监听 host，默认 `127.0.0.1`；局域网访问需显式设置。`CODEX_HUB_AUTHORITY_HOST` 为兼容别名，两者不一致时报错。
+- `CODEX_HUB_PORT`: CLI、VSCode、Electron 共用的端口覆盖；默认 `28788`，WSL 为 `28789`。`CODEX_HUB_AUTHORITY_PORT` 为兼容别名，两者不一致时报错；CLI `--port` 优先。
 - `CODEX_HUB_AUTHORITY_PACKAGE`: 可选的本地 CodexHub npm/link 包根目录；指定后优先使用其中的 `dist-node/authority-service.cjs`、`dist` 和 SSH client bundle
 - `CODEX_HUB_AUTHORITY_NODE`: 可选的 authority Node 可执行文件路径；未设置时优先使用 `PATH` 中的 Node，再回退到宿主运行时
 - `CODEX_HUB_DATA_DIR`: VSCode/Electron 共享 authority 数据目录，默认 `~/.config/codexhub`
@@ -595,10 +599,10 @@ git push origin "v${VERSION}"
 设置 `CODEX_HUB_AUTH_TOKEN` 后，普通 API 使用 `Authorization: Bearer <token>`。`?codexhub_token=` 只用于 `/api/events/ws`、`/api/machines/connect` 和无法添加 Authorization header 的 `/api/file` 图片预览，不会授权其他 API 路径。
 
 ```bash
-curl -sS http://127.0.0.1:8788/api/machines
-curl -sS http://127.0.0.1:8788/api/projects
+curl -sS http://127.0.0.1:28788/api/machines
+curl -sS http://127.0.0.1:28788/api/projects
 
-curl -sS -X POST http://127.0.0.1:8788/api/projects/open \
+curl -sS -X POST http://127.0.0.1:28788/api/projects/open \
   -H 'content-type: application/json' \
   -d '{"machineId":"machine-example","path":"/path/to/project"}'
 ```
@@ -608,9 +612,9 @@ curl -sS -X POST http://127.0.0.1:8788/api/projects/open \
 Telegram、脚本和 Web 都直接针对明确的 `threadId` 投递：
 
 ```bash
-THREAD_ID=$(curl -sS http://127.0.0.1:8788/api/threads | jq -r '.threads[0].threadId')
+THREAD_ID=$(curl -sS http://127.0.0.1:28788/api/threads | jq -r '.threads[0].threadId')
 
-curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
+curl -sS -X POST "http://127.0.0.1:28788/api/threads/$THREAD_ID/turn" \
   -H 'content-type: application/json' \
   -d '{"input":"继续这个 thread","source":"telegram"}'
 ```
@@ -618,10 +622,10 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
 Web 这类多 thread UI 可以直接针对选中的 thread 投递，或让 machine 当前 runtime start/resume 一个 thread tab。Web 前端使用单条 `/api/events/ws` WebSocket 实时流，连接后发送 `hello` 订阅控制面事件，再用 `subscribe_thread` / `unsubscribe_thread` 在同一条连接里维护页面 thread tabs：
 
 ```bash
-MACHINE_ID=$(curl -sS http://127.0.0.1:8788/api/machines | jq -r '.machines[0].machineId')
-THREAD_ID=$(curl -sS http://127.0.0.1:8788/api/threads | jq -r '.threads[0].threadId')
+MACHINE_ID=$(curl -sS http://127.0.0.1:28788/api/machines | jq -r '.machines[0].machineId')
+THREAD_ID=$(curl -sS http://127.0.0.1:28788/api/threads | jq -r '.threads[0].threadId')
 
-curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
+curl -sS -X POST "http://127.0.0.1:28788/api/threads/$THREAD_ID/turn" \
   -H 'content-type: application/json' \
   -d '{"input":"看一下这个项目结构","source":"web"}'
 
@@ -629,21 +633,21 @@ curl -sS -X POST "http://127.0.0.1:8788/api/threads/$THREAD_ID/turn" \
 # {"type":"hello","runtimesAfter":0,"projectsAfter":0,"tasksAfter":0,"connectionsAfter":0}
 # {"type":"subscribe_thread","threadId":"<threadId>","after":0}
 
-curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/runtime/ensure" \
+curl -sS -X POST "http://127.0.0.1:28788/api/machines/$MACHINE_ID/runtime/ensure" \
   -H 'content-type: application/json' \
   -d '{"cwd":"/path/to/project"}'
 
-curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/threads" \
+curl -sS -X POST "http://127.0.0.1:28788/api/machines/$MACHINE_ID/threads" \
   -H 'content-type: application/json' \
   -d '{"action":"resume","threadId":"019e...","cwd":"/path/to/project"}'
 
-curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/threads" \
+curl -sS -X POST "http://127.0.0.1:28788/api/machines/$MACHINE_ID/threads" \
   -H 'content-type: application/json' \
   -d '{"action":"new","cwd":"/path/to/project"}'
 
-curl -sS "http://127.0.0.1:8788/api/machines/$MACHINE_ID/models"
+curl -sS "http://127.0.0.1:28788/api/machines/$MACHINE_ID/models"
 
-curl -sS -X POST "http://127.0.0.1:8788/api/machines/$MACHINE_ID/files/preview" \
+curl -sS -X POST "http://127.0.0.1:28788/api/machines/$MACHINE_ID/files/preview" \
   -H 'content-type: application/json' \
   -d '{"path":"/path/to/project/src/index.ts"}'
 ```

@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { Command } from "commander";
 import { codexHubDataDirectory } from "../core/authorityPaths.js";
@@ -19,9 +20,15 @@ import {
   type ConversationControlResult
 } from "./conversationControl.js";
 import { ConversationStreamRenderer } from "./conversationStreamRenderer.js";
-import { defaultLocalServerUrl, ensureLocalServer } from "./localServerBootstrap.js";
+import {
+  defaultLocalServerUrl,
+  ensureLocalServer,
+  ensureLocalAuthority,
+  startAuthorityClientLease
+} from "./localServerBootstrap.js";
 import { registerParent, resolveRegisterParentTarget } from "./registerParent.js";
 import { threadRunOptionsSchema } from "../shared/apiContract.js";
+import { authorityServiceHost, authorityServicePort } from "../shared/surfaceTypes.js";
 
 type ServerCommandOptions = {
   host?: string;
@@ -128,34 +135,49 @@ program
   .option("--serve-static <dir>", "serve built web assets from this directory")
   .option("--register-to <url>", "also register this server as a machine with a parent CodexHub server")
   .option("--register-auth-token <token>", "parent CodexHub auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
-  .option("--register-machine-id <id>", "stable machine id for parent registration")
-  .option("--register-name <name>", "display name for parent registration")
+  .option("--register-machine-id <id>", "legacy parent profile hint (shared authority identity takes precedence)")
+  .option("--register-name <name>", "legacy parent name hint (shared authority name takes precedence)")
   .option("--approval-policy <policy>", "approval policy override for launched Codex app-server")
   .option("--approvals-reviewer <reviewer>", "approval reviewer override for launched Codex app-server")
   .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
   .action(async (options: ServerCommandOptions = {}) => {
-    const rootOptions = program.opts<{ port?: string }>();
-    const { startServer } = await import("../server/index.js");
+    const port = authorityServicePort(process.env, process.platform, parsePortOption(options.port));
+    const host = authorityServiceHost(process.env, options.host);
     const appServerLaunch = appServerLaunchOptions(options);
-    let handle: Awaited<ReturnType<typeof startServer>> | null = null;
+    const parentUrl = options.registerTo ?? process.env.CODEX_HUB_REGISTER_TO?.trim();
+    const parent = parentUrl ? resolveRegisterParentTarget(parentUrl, options.registerAuthToken) : undefined;
+    if (!parent && (options.registerTo !== undefined || options.registerAuthToken !== undefined
+      || options.registerMachineId !== undefined || options.registerName !== undefined)) {
+      throw new Error("Registration options require --register-to or CODEX_HUB_REGISTER_TO.");
+    }
+    const backend = await ensureLocalAuthority({
+      baseUrl: `http://127.0.0.1:${port}`,
+      dataDir: codexHubDataDirectory(),
+      authToken: process.env.CODEX_HUB_AUTH_TOKEN,
+      host: options.host,
+      staticDirectory: options.serveStatic,
+      appServerLaunch
+    });
+    const lease = startAuthorityClientLease({
+      baseUrl: backend.baseUrl,
+      authToken: backend.authority.authToken,
+      clientId: `server-${randomUUID()}`,
+      keepProcessAlive: true
+    });
     try {
-      handle = await startServer({
-        host: options.host,
-        port: parsePortOption(options.port ?? rootOptions.port),
-        staticDirectory: options.serveStatic,
-        appServerLaunch,
-        parentRegistration: {
-          url: options.registerTo,
-          authToken: options.registerAuthToken,
-          machineId: options.registerMachineId,
-          name: options.registerName
+      await lease.ready;
+      if (parent) {
+        const registration = await registerParent({ localServerUrl: backend.baseUrl, localAuthToken: backend.authority.authToken,
+          parentUrl: parent.url, parentAuthToken: parent.authToken,
+          machineId: options.registerMachineId, name: options.registerName });
+        if (registration.registration?.machineId) {
+          console.error(`codexhub parent registration identity: ${registration.registration.machineId} (${registration.registration.name})`);
         }
-      });
-      const localUrl = serverUrl(handle.host, handle.port);
-      console.error(`codexhub server listening: ${localUrl}`);
-      await waitForShutdown();
+      }
+      console.error(`codexhub server managing shared authority: ${serverUrl(host, port)}`);
+      await Promise.race([waitForShutdown(), lease.failed]);
     } finally {
-      await handle?.stop();
+      lease.stop();
     }
   });
 
@@ -504,55 +526,66 @@ async function runConversationCommand(
   const conversationDeadline = Date.now() + timeoutSeconds * 1000;
   const backend = await resolveConversationBackend(options.cwd, conversationDeadline);
   console.error(`codexhub backend: ${new URL(backend.baseUrl).origin} (${backend.status})`);
+  const lease = backend.status === "connected"
+    ? undefined
+    : startAuthorityClientLease({
+      baseUrl: backend.baseUrl,
+      authToken: backend.authority.authToken,
+      clientId: `cli-${randomUUID()}`
+    });
   const remainingTimeoutMs = conversationDeadline - Date.now();
-  if (remainingTimeoutMs <= 0) throw new Error("CLI conversation timeout expired during local server startup; no turn was submitted.");
-  const remainingTimeoutSeconds = remainingTimeoutMs / 1000;
-  const renderer = options.stream
-    ? new ConversationStreamRenderer()
-    : undefined;
-  const result = await runConversation({
-    operation: options.operation,
-    input,
-    name: options.name,
-    threadId: options.threadId,
-    machineId: options.machine,
-    cwd: options.cwd,
-    model: options.model,
-    effort: options.effort,
-    noWait: options.noWait,
-    json: options.json,
-    baseUrl: backend.baseUrl,
-    authToken: process.env.CODEX_HUB_AUTH_TOKEN,
-    timeoutSeconds: remainingTimeoutSeconds,
-    onThreadReady: renderer
-      ? (target) => renderer.threadStarted(target)
-      : json ? undefined : (target) => console.log(`Thread ID: ${target.threadId}`),
-    onStreamEvent: renderer ? (event) => renderer.event(event) : undefined,
-    onError: renderer
-      ? (error) => renderer.error({ message: error.message })
-      : undefined
-  });
-  if (renderer) {
-    if (result.waited) {
-      // The HTTP response and this lastSeq wait are the completion boundary;
-      // stream records themselves were emitted by the WS callback above.
-      if (result.lastSeq === undefined) throw new Error("CodexHub completed a stream without a lastSeq barrier.");
-      renderer.completed();
+  try {
+    if (remainingTimeoutMs <= 0) throw new Error("CLI conversation timeout expired during local server startup; no turn was submitted.");
+    const remainingTimeoutSeconds = remainingTimeoutMs / 1000;
+    const renderer = options.stream
+      ? new ConversationStreamRenderer()
+      : undefined;
+    const result = await runConversation({
+      operation: options.operation,
+      input,
+      name: options.name,
+      threadId: options.threadId,
+      machineId: options.machine,
+      cwd: options.cwd,
+      model: options.model,
+      effort: options.effort,
+      noWait: options.noWait,
+      json: options.json,
+      baseUrl: backend.baseUrl,
+      authToken: backend.status === "connected" ? process.env.CODEX_HUB_AUTH_TOKEN : backend.authority.authToken,
+      timeoutSeconds: remainingTimeoutSeconds,
+      onThreadReady: renderer
+        ? (target) => renderer.threadStarted(target)
+        : json ? undefined : (target) => console.log(`Thread ID: ${target.threadId}`),
+      onStreamEvent: renderer ? (event) => renderer.event(event) : undefined,
+      onError: renderer
+        ? (error) => renderer.error({ message: error.message })
+        : undefined
+    });
+    if (renderer) {
+      if (result.waited) {
+        // The HTTP response and this lastSeq wait are the completion boundary;
+        // stream records themselves were emitted by the WS callback above.
+        if (result.lastSeq === undefined) throw new Error("CodexHub completed a stream without a lastSeq barrier.");
+        renderer.completed();
+      }
+      return;
     }
-    return;
+    if (json) {
+      const { lastSeq, ...publicResult } = result;
+      void lastSeq;
+      console.log(JSON.stringify(publicResult));
+      return;
+    }
+    if (options.noWait) {
+      if (result.submissionId) console.log(`Submission ID: ${result.submissionId}`);
+      if (result.delivery) console.log(`Delivery: ${result.delivery}`);
+      return;
+    }
+    for (const text of result.assistant) console.log(text);
+  } finally {
+    lease?.stop();
   }
-  if (json) {
-    const { lastSeq, ...publicResult } = result;
-    void lastSeq;
-    console.log(JSON.stringify(publicResult));
-    return;
-  }
-  if (options.noWait) {
-    if (result.submissionId) console.log(`Submission ID: ${result.submissionId}`);
-    if (result.delivery) console.log(`Delivery: ${result.delivery}`);
-    return;
-  }
-  for (const text of result.assistant) console.log(text);
 }
 
 async function runConversationControlCommand(
@@ -564,31 +597,43 @@ async function runConversationControlCommand(
   const deadline = Date.now() + timeoutSeconds * 1000;
   const backend = await resolveConversationBackend(undefined, deadline);
   console.error(`codexhub backend: ${new URL(backend.baseUrl).origin} (${backend.status})`);
-  const remainingTimeoutMs = deadline - Date.now();
-  if (remainingTimeoutMs <= 0) {
-    throw new Error("CLI conversation timeout expired during local server startup; thread control was not submitted.");
+  const lease = backend.status === "connected"
+    ? undefined
+    : startAuthorityClientLease({
+      baseUrl: backend.baseUrl,
+      authToken: backend.authority.authToken,
+      clientId: `cli-${randomUUID()}`
+    });
+  try {
+    await lease?.ready;
+    const remainingTimeoutMs = deadline - Date.now();
+    if (remainingTimeoutMs <= 0) {
+      throw new Error("CLI conversation timeout expired during local server startup; thread control was not submitted.");
+    }
+    const result: ConversationControlResult = await runConversationControl({
+      operation,
+      threadId,
+      baseUrl: backend.baseUrl,
+      authToken: backend.status === "connected" ? process.env.CODEX_HUB_AUTH_TOKEN : backend.authority.authToken,
+      timeoutSeconds: remainingTimeoutMs / 1000
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
+    if (operation === "stop") {
+      console.log(result.stopped
+        ? `Stopped thread ${threadId}; canonical running=false.`
+        : `Thread ${threadId} was already idle; canonical running=false.`);
+      return;
+    }
+    console.log(
+      `Ended delegation for thread ${threadId}; cancelled ${result.cancelledSubmissionIds.length} queued message(s), `
+      + "canonical running=false; history retained and the thread remains resumable."
+    );
+  } finally {
+    lease?.stop();
   }
-  const result: ConversationControlResult = await runConversationControl({
-    operation,
-    threadId,
-    baseUrl: backend.baseUrl,
-    authToken: process.env.CODEX_HUB_AUTH_TOKEN,
-    timeoutSeconds: remainingTimeoutMs / 1000
-  });
-  if (options.json) {
-    console.log(JSON.stringify(result));
-    return;
-  }
-  if (operation === "stop") {
-    console.log(result.stopped
-      ? `Stopped thread ${threadId}; canonical running=false.`
-      : `Thread ${threadId} was already idle; canonical running=false.`);
-    return;
-  }
-  console.log(
-    `Ended delegation for thread ${threadId}; cancelled ${result.cancelledSubmissionIds.length} queued message(s), `
-    + "canonical running=false; history retained and the thread remains resumable."
-  );
 }
 
 async function resolveConversationBackend(cwd: string | undefined, deadline: number) {
@@ -814,9 +859,7 @@ function serverUrl(host: string, port: number) {
 function defaultServerUrl() {
   const configuredUrl = process.env.CODEX_HUB_SERVER_URL?.trim();
   if (configuredUrl) return configuredUrl;
-  const host = process.env.CODEX_HUB_HOST ?? "127.0.0.1";
-  const port = process.env.CODEX_HUB_PORT ?? "8788";
-  return serverUrl(host, parsePortOption(port) ?? 8788);
+  return defaultLocalServerUrl();
 }
 
 function waitForShutdown() {

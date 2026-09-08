@@ -1,3 +1,4 @@
+import type { CodexAppServerLaunchOptions } from "./appServerLaunch.js";
 import { z } from "zod";
 import { machineFilePreviewMediaContentTypes } from "./machineTypes.js";
 import { isCronExpression } from "./taskCron.js";
@@ -183,6 +184,7 @@ export type HealthPayload = AuthStatusPayload & {
   port?: number;
   surface?: CodexHubSurface;
   authority?: CodexHubAuthorityDescriptor;
+  appServerLaunch?: CodexAppServerLaunchOptions;
   authorityUpdate?: AuthorityUpdatePayload;
   authorityLocalBuild?: string | null;
   authorityRuntime?: AuthorityRuntimePayload;

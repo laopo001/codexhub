@@ -1,4 +1,4 @@
-import type { ParentRegistrationConnectInput } from "../shared/apiContract.js";
+import type { ParentRegistrationConnectInput, ParentRegistrationPayload } from "../shared/apiContract.js";
 
 export type RegisterParentOptions = {
   localServerUrl: string;
@@ -84,6 +84,7 @@ export const registerParent = async (options: RegisterParentOptions) => {
   if (!hasAcceptedRegistrationStatus(responseJson)) {
     throw new Error("Local CodexHub server did not accept parent registration.");
   }
+  return responseJson as ParentRegistrationPayload;
 };
 
 const hasAcceptedRegistrationStatus = (value: unknown) => {

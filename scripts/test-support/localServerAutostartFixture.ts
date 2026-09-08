@@ -1,8 +1,9 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { findFreePort } from "../../src/server/embedded.js";
 
 const require = createRequire(import.meta.url);
@@ -110,17 +111,27 @@ export type LocalServerAutostartFixture = {
   port: number;
   url: string;
   authToken: string;
+  environment: () => NodeJS.ProcessEnv;
   runCli: (args: string[], options?: { built?: boolean; env?: NodeJS.ProcessEnv }) => Promise<CliResult>;
+  startCli: (args: string[], options?: { built?: boolean; env?: NodeJS.ProcessEnv }) => Promise<RunningCli>;
   readStats: () => Promise<{ startCount: number; pids: number[] }>;
   serverPid: () => Promise<number | undefined>;
+  authorityPids: () => Promise<number[]>;
   stopServer: () => Promise<void>;
+  stopAuthority: () => Promise<void>;
   close: () => Promise<void>;
 };
 
 type CliResult = { code: number | null; stdout: string; stderr: string };
+export type RunningCli = {
+  child: ChildProcess;
+  output: () => string;
+  stop: () => Promise<void>;
+};
 
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const tsxCli = path.join(projectRoot, "node_modules/tsx/dist/cli.mjs");
+const execFileAsync = promisify(execFile);
 
 export const createLocalServerAutostartFixture = async (): Promise<LocalServerAutostartFixture> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-local-autostart."));
@@ -137,6 +148,8 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
   const baseEnv = () => {
     const env = { ...process.env };
     delete env.CODEX_HUB_SERVER_URL;
+    delete env.CODEX_HUB_AUTHORITY_HOST;
+    delete env.CODEX_HUB_AUTHORITY_PORT;
     return {
       ...env,
       CODEX_HUB_DATA_DIR: dataDir,
@@ -148,18 +161,12 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
       MOCK_CODEX_WS_MODULE: mockWebSocketModule,
       CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS: "5000",
       CODEX_HUB_LOCAL_SERVER_START_TIMEOUT_MS: "15000",
-      CODEX_HUB_PLUGIN_TELEGRAM: "0"
+      CODEX_HUB_PLUGIN_TELEGRAM: "0",
+      CODEX_HUB_NTFY_URL: ""
     };
   };
   const runCli = async (args: string[], options: { built?: boolean; env?: NodeJS.ProcessEnv } = {}) => {
-    const commandArgs = options.built
-      ? [path.join(projectRoot, "bin/codexhub"), ...args]
-      : [tsxCli, "src/cli/codexhub.ts", ...args];
-    const child = spawn(process.execPath, commandArgs, {
-      cwd: projectRoot,
-      env: { ...baseEnv(), ...options.env },
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    const child = spawnCli(args, options, baseEnv());
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -169,6 +176,18 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
       child.once("close", resolve);
     });
     return { code, stdout: Buffer.concat(stdout).toString("utf8").trim(), stderr: Buffer.concat(stderr).toString("utf8").trim() };
+  };
+  const startCli = async (args: string[], options: { built?: boolean; env?: NodeJS.ProcessEnv } = {}) => {
+    const child = spawnCli(args, options, baseEnv());
+    let output = "";
+    const append = (chunk: Buffer) => { output += chunk.toString("utf8"); };
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    return {
+      child,
+      output: () => output,
+      stop: () => stopChildProcess(child)
+    } satisfies RunningCli;
   };
   const readStats = async () => JSON.parse(await readFile(statsPath, "utf8")) as { startCount: number; pids: number[] };
   const serverPid = async () => {
@@ -188,20 +207,99 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
       await waitForProcessExit(pid, 10_000);
     }
   };
+  const authorityPids = async () => await findAuthorityPids(dataDir);
+  const stopAuthority = async () => {
+    for (const pid of await authorityPids()) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already stopped */ }
+    }
+    await waitForPidsExit(await authorityPids(), 10_000);
+    for (const pid of await authorityPids()) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* already stopped */ }
+    }
+  };
   const close = async () => {
     if (stopped) return;
     stopped = true;
     await stopServer();
+    await stopAuthority();
     await rm(root, { recursive: true, force: true });
   };
-  return { root, dataDir, mockCodexPath, statsPath, port, url: `http://127.0.0.1:${port}`, authToken, runCli, readStats, serverPid, stopServer, close };
+  return { root, dataDir, mockCodexPath, statsPath, port, url: `http://127.0.0.1:${port}`, authToken, environment: baseEnv, runCli, startCli, readStats, serverPid, authorityPids, stopServer, stopAuthority, close };
 };
+
+const spawnCli = (
+  args: string[],
+  options: { built?: boolean; env?: NodeJS.ProcessEnv },
+  environment: NodeJS.ProcessEnv
+) => {
+  const commandArgs = options.built
+    ? [path.join(projectRoot, "bin/codexhub"), ...args]
+    : [tsxCli, "src/cli/codexhub.ts", ...args];
+  return spawn(process.execPath, commandArgs, {
+    cwd: projectRoot,
+    env: { ...environment, ...options.env },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+};
+
 
 const waitForProcessExit = async (pid: number, timeoutMs: number) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try { process.kill(pid, 0); } catch { return; }
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+};
+
+const stopChildProcess = async (child: ChildProcess) => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try { child.kill("SIGTERM"); } catch { return; }
+  await waitForChildExit(child, 5_000);
+  if (child.exitCode === null && child.signalCode === null) {
+    try { child.kill("SIGKILL"); } catch { /* already stopped */ }
+    await waitForChildExit(child, 3_000);
+  }
+};
+
+const waitForChildExit = async (child: ChildProcess, timeoutMs: number) => await new Promise<boolean>((resolve) => {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    resolve(true);
+    return;
+  }
+  const timer = setTimeout(() => resolve(false), timeoutMs);
+  child.once("exit", () => {
+    clearTimeout(timer);
+    resolve(true);
+  });
+});
+
+const findAuthorityPids = async (dataDir: string) => {
+  if (process.platform === "win32") return [];
+  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,args="]);
+  return stdout.split("\n").flatMap((line) => {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match || Number(match[1]) === process.pid) return [];
+    const args = match[2];
+    if (!args.includes("--data-dir") || !args.includes(dataDir)) return [];
+    if (!args.includes("authorityServiceMain") && !args.includes("authority-service.cjs")) return [];
+    return [Number(match[1])];
+  });
+};
+
+const waitForPidsExit = async (pids: number[], timeoutMs: number) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!pids.some((pid) => processAlive(pid))) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+};
+
+const processAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 };
 

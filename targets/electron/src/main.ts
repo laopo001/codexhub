@@ -627,7 +627,7 @@ const stopOwnedAuthorityProcess = async (
   reason: AuthorityStopReason
 ) => {
   if (!target?.startedByCaller || !target.pid) return;
-  const currentHealth = await probeEmbeddedAuthority(target.url, target.authorityId, Boolean(target.authToken)).catch(() => null);
+  const currentHealth = await probeEmbeddedAuthority(target.url, target.authorityId, Boolean(target.authToken), target.authToken).catch(() => null);
   if (!shouldStopOwnedAuthorityProcess(target, currentHealth, reason)) return;
   const pid = target.pid;
   try {
@@ -667,7 +667,7 @@ const recoverElectronSurface = () => {
     // killing a shared VS Code-owned authority. If it is non-responsive and
     // Electron owns it, reap it so the new linked package can bind the port.
     const previousHealth = previous
-      ? await probeEmbeddedAuthority(previous.url, previous.authorityId, Boolean(previous.authToken)).catch(() => null)
+      ? await probeEmbeddedAuthority(previous.url, previous.authorityId, Boolean(previous.authToken), previous.authToken).catch(() => null)
       : null;
     // Recovery may stop only an owned, still-unreachable authority. A changed
     // generation means takeover/self-restart; a same generation means attach.

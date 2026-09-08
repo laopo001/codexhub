@@ -28,7 +28,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV CODEX_HUB_HOST=0.0.0.0
-ENV CODEX_HUB_PORT=8788
+ENV CODEX_HUB_PORT=28788
 ENV CODEX_HUB_DATA_DIR=/data
 ENV CODEX_HUB_PLUGIN_DIR=/plugins
 ENV CODEX_HUB_LOCAL_MACHINE=0
@@ -46,6 +46,6 @@ COPY --from=build /app/node_modules ./node_modules
 RUN mkdir -p /data /plugins
 
 VOLUME ["/data", "/plugins"]
-EXPOSE 8788
+EXPOSE 28788
 
 CMD ["node", "bin/codexhub", "server", "--host", "0.0.0.0"]

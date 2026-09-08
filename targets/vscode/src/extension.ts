@@ -416,7 +416,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   private async ensureServer() {
     const current = CodexHubWorkspaceViewProvider.currentServer;
     if (current) {
-      const health = await probeEmbeddedAuthority(current.url, current.authorityId, Boolean(current.authToken));
+      const health = await probeEmbeddedAuthority(current.url, current.authorityId, Boolean(current.authToken), current.authToken);
       if (health) return current;
       CodexHubWorkspaceViewProvider.resetCurrentServer();
     }

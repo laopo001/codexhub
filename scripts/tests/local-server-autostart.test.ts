@@ -37,7 +37,7 @@ test("start auto-starts one standalone server, keeps it alive, reuses it, and se
     assert.equal(sent.threadId, started.threadId);
     assert.equal((await fixture.readStats()).startCount, 1);
 
-    const logInfo = await stat(`${fixture.dataDir}/local-server-${fixture.port}.log`);
+    const logInfo = await stat(`${fixture.dataDir}/authority.log`);
     assert.equal(logInfo.mode & 0o777, 0o600);
   } finally {
     await fixture.close();
@@ -100,7 +100,7 @@ test("a non-CodexHub service on the default port is reported and left running", 
   try {
     const result = await fixture.runCli(["start", "occupied", "--name", "Occupied", "--no-wait"]);
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /non-matching|invalid CodexHub health|profile mismatch/);
+    assert.match(result.stderr, /non-CodexHub service|non-matching|non-authority|invalid CodexHub health|profile mismatch/);
     assert.equal(occupied.listening, true);
     assert.equal((await fixture.readStats()).startCount, 0);
   } finally {

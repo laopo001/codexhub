@@ -12,13 +12,13 @@ import {
 const execFileAsync = promisify(execFile);
 
 const main = async () => {
-  await prepareAuthorityPortForSmoke();
+  const authorityPort = await prepareAuthorityPortForSmoke();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-state."));
   const pluginDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-plugins."));
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-electron-user-data."));
   let output: string;
   try {
-    output = await runElectronSmoke(dataDir, pluginDir, userDataDir);
+    output = await runElectronSmoke(dataDir, pluginDir, userDataDir, authorityPort);
   } finally {
     await cleanupIsolatedAuthority(dataDir);
     await Promise.all([
@@ -28,9 +28,9 @@ const main = async () => {
     ]);
   }
   const payload = parseSmokePayload(output);
-  if (payload.health.port !== authorityServicePort()) {
+  if (payload.health.port !== authorityPort) {
     throw new Error(
-      `Electron smoke did not use the shared authority port ${authorityServicePort()}: ${JSON.stringify(payload.health)}`
+      `Electron smoke did not use the shared authority port ${authorityPort}: ${JSON.stringify(payload.health)}`
     );
   }
   if (!payload.health.authority || payload.health.authority.surfaceProtocolVersion !== embeddedSurfaceProtocolVersion) {
@@ -68,12 +68,23 @@ const main = async () => {
 };
 
 const prepareAuthorityPortForSmoke = async () => {
-  if (process.env.CODEX_HUB_AUTHORITY_PORT?.trim()) return;
-  const defaultPort = authorityServicePort({ ...process.env, CODEX_HUB_AUTHORITY_PORT: undefined });
-  if (!await isPortListening(defaultPort)) return;
+  const canonical = process.env.CODEX_HUB_PORT?.trim();
+  const legacy = process.env.CODEX_HUB_AUTHORITY_PORT?.trim();
+  let configuredPort: number | undefined;
+  if (canonical && legacy && canonical !== legacy) {
+    console.log("electron smoke: CODEX_HUB_PORT and CODEX_HUB_AUTHORITY_PORT conflict; using an isolated test port");
+  } else {
+    configuredPort = authorityServicePort(process.env);
+  }
+  const candidate = configuredPort ?? authorityServicePort({
+    ...process.env,
+    CODEX_HUB_PORT: undefined,
+    CODEX_HUB_AUTHORITY_PORT: undefined
+  });
+  if (!await isPortListening(candidate)) return candidate;
   const port = await findFreePort();
-  process.env.CODEX_HUB_AUTHORITY_PORT = String(port);
-  console.log(`electron smoke: shared authority default port ${defaultPort} is busy; using isolated test port ${port}`);
+  console.log(`electron smoke: shared authority port ${candidate} is busy; using isolated test port ${port}`);
+  return port;
 };
 
 const findFreePort = async () => await new Promise<number>((resolve, reject) => {
@@ -103,7 +114,7 @@ const isPortListening = async (port: number) => await new Promise<boolean>((reso
   socket.once("timeout", () => finish(false));
 });
 
-const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir: string) => await new Promise<string>((resolve, reject) => {
+const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir: string, authorityPort: number) => await new Promise<string>((resolve, reject) => {
   const electronBin = path.join(
     process.cwd(),
     "node_modules",
@@ -115,9 +126,10 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
     CODEX_HUB_DATA_DIR: dataDir,
     CODEX_HUB_PLUGIN_DIR: pluginDir,
     CODEX_HUB_LOCAL_MACHINE: "1",
-    CODEX_HUB_ELECTRON_SMOKE: "1"
+    CODEX_HUB_ELECTRON_SMOKE: "1",
+    CODEX_HUB_PORT: String(authorityPort)
   };
-  delete env.CODEX_HUB_PORT;
+  delete env.CODEX_HUB_AUTHORITY_PORT;
   delete env.ELECTRON_RUN_AS_NODE;
 
   const child = spawn(electronBin, [
@@ -157,7 +169,10 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
 const cleanupIsolatedAuthority = async (dataDir: string) => {
   if (process.platform === "win32") return;
   const { stdout } = await execFileAsync("ps", ["-eo", "pid=,args="]);
-  const servicePath = path.resolve("dist-node/authority-service.cjs");
+  const servicePaths = [
+    path.resolve("dist-node/authority-service.cjs"),
+    path.resolve("dist-node/electron/authority-service.cjs")
+  ];
   const pids = stdout.split("\n").flatMap((line) => {
     const trimmed = line.trim();
     const match = trimmed.match(/^(\d+)\s+(.+)$/);
@@ -165,7 +180,8 @@ const cleanupIsolatedAuthority = async (dataDir: string) => {
     const args = match[2].split(/\s+/);
     const hasDataDir = args.includes("--data-dir") && args.includes(dataDir);
     const hasHandoff = args.includes("--handoff") && args.some((arg) => arg.startsWith(dataDir + path.sep));
-    if (!args.includes(servicePath) || (!hasDataDir && !hasHandoff)) return [];
+    const hasService = servicePaths.some((servicePath) => args.includes(servicePath));
+    if (!hasService || (!hasDataDir && !hasHandoff)) return [];
     return [Number(match[1])];
   }).filter((pid) => pid > 0 && pid !== process.pid);
   for (const pid of pids) {

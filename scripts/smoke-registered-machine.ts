@@ -1,8 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, readlink, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import YAML from "yaml";
+import WebSocket from "ws";
 import { startCodexhubMachine } from "../src/cli/codexhubMachine.js";
 import type { MachineRegistrationProject } from "../src/shared/machineTypes.js";
 import { assertNoWorkerId } from "./smoke/support/assertions.js";
@@ -41,6 +43,7 @@ type ThreadDetail = {
 };
 
 const repoRoot = process.cwd();
+const execFileAsync = promisify(execFile);
 
 const main = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-registered-smoke."));
@@ -91,25 +94,30 @@ const main = async () => {
         server = await startServer({ host: "127.0.0.1", port });
       }
     });
-    const serverMachineId = `registered-server-smoke-${process.pid}`;
-    const serverMachineName = "Registered Server Smoke";
+    const serverChild = await startRegisteredServer(apiBase, `registered-server-smoke-${process.pid}`, "Registered Server Smoke", childServerDataDir);
+    await waitForChildServer(serverChild.apiBase, serverChild);
+    const serverIdentity = await readAuthorityRegistration(serverChild.apiBase);
     await runRegisteredScenario({
       label: "registered server",
       apiBase,
-      machineId: serverMachineId,
-      machineName: serverMachineName,
+      machineId: serverIdentity.machineId,
+      machineName: serverIdentity.name,
       projectDir: serverProjectDir,
-      child: await startRegisteredServer(apiBase, serverMachineId, serverMachineName, childServerDataDir)
+      child: serverChild
     });
-    const dynamicMachineId = `registered-dynamic-server-smoke-${process.pid}`;
-    const dynamicMachineName = "Registered Dynamic Server Smoke";
+    let dynamicMachineId = `registered-dynamic-server-smoke-${process.pid}`;
+    let dynamicMachineName = "Registered Dynamic Server Smoke";
     let dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
     try {
       await waitForChildServer(dynamicChild.apiBase, dynamicChild);
       await assertSelfRegistrationRejected(dynamicChild.apiBase);
       await connectDynamicParent(dynamicChild.apiBase, apiBase, dynamicMachineId, dynamicMachineName);
+      const dynamicIdentity = await readAuthorityRegistration(dynamicChild.apiBase);
+      dynamicMachineId = dynamicIdentity.machineId;
+      dynamicMachineName = dynamicIdentity.name;
       await waitForRegisteredMachine(apiBase, dynamicMachineId, dynamicMachineName, dynamicChild);
       await stopChild(dynamicChild);
+      await stopAuthorityForDataDir(dynamicServerDataDir);
       await waitForRegisteredMachineRemoved(apiBase, dynamicMachineId);
       await assertPersistedParentRegistration(dynamicServerDataDir, apiBase, dynamicMachineId, dynamicMachineName, true);
 
@@ -127,6 +135,7 @@ const main = async () => {
       }
       await waitForRegisteredMachineRemoved(apiBase, dynamicMachineId);
       await stopChild(dynamicChild);
+      await stopAuthorityForDataDir(dynamicServerDataDir);
       await assertPersistedParentRegistration(dynamicServerDataDir, apiBase, dynamicMachineId, dynamicMachineName, false);
 
       dynamicChild = await startDynamicRegisteredServer(dynamicServerDataDir);
@@ -146,6 +155,7 @@ const main = async () => {
       });
     } finally {
       await stopChild(dynamicChild).catch(() => undefined);
+      await stopAuthorityForDataDir(dynamicServerDataDir).catch(() => undefined);
     }
 
     const sharedMachineA = `registered-vscode-workspace-a-${process.pid}`;
@@ -362,11 +372,15 @@ const assertPersistedParentRegistration = async (
   const registration = parsed.parentRegistration;
   if (
     registration?.url !== apiBase
-    || registration.machineId !== machineId
-    || registration.name !== name
+    || registration.machineId !== undefined
+    || registration.name !== undefined
     || registration.authToken !== "dynamic-smoke-token"
   ) {
     throw new Error(`parent registration was not persisted: ${raw}`);
+  }
+  const authorityId = (await readFile(path.join(dataDir, "authority-id"), "utf8")).trim();
+  if (machineId !== `machine-authority-${authorityId.replace(/^authority-/, "")}` || !name.startsWith("CodexHub Authority")) {
+    throw new Error("Registered identity must come from the shared authority, not a launching client.");
   }
   const mode = (await stat(configPath)).mode & 0o777;
   if (mode !== 0o600) throw new Error(`config with parent auth token is not mode 0600: ${mode.toString(8)}`);
@@ -406,7 +420,7 @@ const runRegisteredScenario = async (input: {
   machineId: string;
   machineName: string;
   projectDir: string;
-  child: ChildProcess & { output: () => string };
+  child: ChildProcess & { output: () => string; authorityDataDir?: string };
 }) => {
   const { label, apiBase, machineId, machineName, projectDir, child } = input;
   try {
@@ -425,18 +439,20 @@ const runRegisteredScenario = async (input: {
     await waitForRuntimeOnline(apiBase, machineId);
     console.log(`${label} project thread ok: ${machineId} ${threadId}`);
 
-    const turn = await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: "/status", source: "web" })
+    const thread = await withThreadSubscription(apiBase, threadId, async () => {
+      const turn = await apiJson(apiBase, `/api/threads/${encodeURIComponent(threadId)}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: "/status", source: "web" })
+      });
+      assertNoWorkerId(turn, "/api/threads/:threadId/turn");
+      return await waitForThreadRecords(apiBase, threadId, 2);
     });
-    assertNoWorkerId(turn, "/api/threads/:threadId/turn");
-
-    const thread = await waitForThreadRecords(apiBase, threadId, 2);
     assertNoWorkerId(thread, "/api/threads/:threadId");
     console.log(`${label} thread flow ok`);
 
     await stopChild(child);
+    if (child.authorityDataDir) await stopAuthorityForDataDir(child.authorityDataDir);
     await waitForRegisteredMachineRemoved(apiBase, machine.machineId);
     await waitForRuntimeStopped(apiBase, machineId);
     await waitForNoCodexAppServerForCwd(projectDir);
@@ -447,6 +463,7 @@ const runRegisteredScenario = async (input: {
     throw error;
   } finally {
     await stopChild(child).catch(() => undefined);
+    if (child.authorityDataDir) await stopAuthorityForDataDir(child.authorityDataDir).catch(() => undefined);
   }
 };
 
@@ -457,7 +474,7 @@ const runRegisteredParentRestartScenario = async (input: {
   machineName: string;
   projectDir: string;
   secondaryProjectDir: string;
-  child: ChildProcess & { output: () => string };
+  child: ChildProcess & { output: () => string; authorityDataDir?: string };
   restartParent: () => Promise<void>;
 }) => {
   const { label, apiBase, machineId, machineName, projectDir, secondaryProjectDir, child, restartParent } = input;
@@ -537,6 +554,7 @@ const runRegisteredParentRestartScenario = async (input: {
     console.log(`${label} reattach ok: ${machineId} ${initialThreadId} -> ${threadId} -> ${resumedThreadId}`);
 
     await stopChild(child);
+    if (child.authorityDataDir) await stopAuthorityForDataDir(child.authorityDataDir);
     await waitForRegisteredMachineRemoved(apiBase, machineId);
     await waitForRuntimeStopped(apiBase, machineId);
     await waitForNoCodexAppServerForCwd(projectDir);
@@ -547,6 +565,7 @@ const runRegisteredParentRestartScenario = async (input: {
     throw error;
   } finally {
     await stopChild(child).catch(() => undefined);
+    if (child.authorityDataDir) await stopAuthorityForDataDir(child.authorityDataDir).catch(() => undefined);
   }
 };
 
@@ -617,7 +636,7 @@ const startRegisteredServer = async (apiBase: string, machineId: string, machine
   };
   child.stdout?.on("data", append);
   child.stderr?.on("data", append);
-  return Object.assign(child, { output: () => output });
+  return Object.assign(child, { output: () => output, authorityDataDir: dataDir, apiBase: `http://127.0.0.1:${port}` });
 };
 
 const startDynamicRegisteredServer = async (dataDir: string) => {
@@ -650,7 +669,8 @@ const startDynamicRegisteredServer = async (dataDir: string) => {
   child.stderr?.on("data", append);
   return Object.assign(child, {
     apiBase: `http://127.0.0.1:${port}`,
-    output: () => output
+    output: () => output,
+    authorityDataDir: dataDir
   });
 };
 
@@ -770,6 +790,48 @@ const stopChild = async (child: ChildProcess) => {
   }
 };
 
+const stopAuthorityForDataDir = async (dataDir: string) => {
+  if (process.platform === "win32") return;
+  const pids = await authorityPidsForDataDir(dataDir);
+  for (const pid of pids) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already stopped */ }
+  }
+  await waitForProcessPidsExit(pids, 10_000);
+  for (const pid of await authorityPidsForDataDir(dataDir)) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already stopped */ }
+  }
+};
+
+const authorityPidsForDataDir = async (dataDir: string) => {
+  const { stdout } = await execFileAsync("ps", ["-eo", "pid=,args="]);
+  return stdout.split("\n").flatMap((line) => {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match || Number(match[1]) === process.pid) return [];
+    const args = match[2].split(/\s+/);
+    const dataDirIndex = args.indexOf("--data-dir");
+    if (dataDirIndex < 0 || args[dataDirIndex + 1] !== dataDir) return [];
+    if (!args.some((arg) => arg.endsWith("/authorityServiceMain.ts") || arg.endsWith("/authorityServiceMain.js") || arg.endsWith("/authority-service.cjs"))) return [];
+    return [Number(match[1])];
+  });
+};
+
+const waitForProcessPidsExit = async (pids: number[], timeoutMs: number) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!pids.some((pid) => processAlive(pid))) return;
+    await delay(50);
+  }
+};
+
+const processAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const waitForChildExit = async (child: ChildProcess, timeoutMs: number) =>
   await new Promise<boolean>((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -787,3 +849,37 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
+
+const readAuthorityRegistration = async (apiBase: string) => {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const health = await apiJson<{ authority?: { authorityId: string } }>(apiBase, "/api/health");
+    const payload = await apiJson<{ registration?: { machineId?: string; name?: string } }>(apiBase, "/api/registered/parent");
+    if (payload.registration?.machineId && payload.registration.name && health.authority) {
+      const machineId = `machine-authority-${health.authority.authorityId.replace(/^authority-/, "")}`;
+      if (payload.registration.machineId !== machineId) throw new Error("Parent registration did not use the authority identity.");
+      return { machineId, name: payload.registration.name };
+    }
+    await delay(100);
+  }
+  throw new Error("Authority registration identity did not become available.");
+};
+
+// Backend registrations relay transcript records only for an explicit Web/CLI subscription.
+const withThreadSubscription = async <T>(apiBase: string, threadId: string, action: () => Promise<T>) => {
+  const url = new URL("/api/events/ws", apiBase);
+  url.protocol = "ws:";
+  const ws = new WebSocket(url);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Thread subscription was not acknowledged.")), 10_000);
+      ws.on("error", (error) => { clearTimeout(timer); reject(error); });
+      ws.on("open", () => ws.send(JSON.stringify({ type: "subscribe_thread", threadId, after: 0 })));
+      ws.on("message", (data) => {
+        const message = JSON.parse(String(data)) as { type?: string; threadId?: string };
+        if (message.type === "thread_subscribed" && message.threadId === threadId) { clearTimeout(timer); resolve(); }
+      });
+    });
+    return await action();
+  } finally { ws.close(); }
+};
