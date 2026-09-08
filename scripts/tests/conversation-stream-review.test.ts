@@ -88,7 +88,9 @@ for (const mode of ["rejected", "timeout"] as const) {
     try {
       await assert.rejects(runConversation({ baseUrl: f.url, operation: "send", threadId: "t", input: "hello", timeoutSeconds: mode === "rejected" ? 1 : 0.05 }),
         mode === "rejected" ? /subscription refused/ : /timed out/);
-      await delay(30);
+      // Socket close is asynchronous; parallel suites may delay its delivery.
+      const closeDeadline = Date.now() + 1000;
+      while (f.sockets.size && Date.now() < closeDeadline) await delay(10);
       assert.equal(f.sockets.size, 0, "failed subscription must release its socket");
       assert.deepEqual(f.turns, [], "subscription failure must not submit a turn");
     } finally { await f.close(); }
@@ -126,9 +128,9 @@ test("conversation timeout is shared across preparation and execution phases", a
   } finally { await f.close(); }
 });
 
-test("tool completion prints buffered output when only its status changes", () => {
+test("tool completion prints one status and hides buffered output", () => {
   let output = "";
-  const renderer = new ConversationStreamRenderer("normal", chunk => { output += chunk; });
+  const renderer = new ConversationStreamRenderer(chunk => { output += chunk; });
   const body = Array.from({ length: 300 }, (_, i) => `output-line-${String(i + 1).padStart(3, "0")}`).join("\n");
   const update = (status: string, aggregated_output: string) => renderer.event({
     kind: "record", threadId: "t", record: {
@@ -142,7 +144,7 @@ test("tool completion prints buffered output when only its status changes", () =
   assert.ok(!output.includes("output-line-001"));
   update("completed", body);
   update("completed", body);
-  assert.equal(output.split("output-line-001").length - 1, 1);
-  assert.match(output, /output-line-300/);
+  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 1);
+  assert.doesNotMatch(output, /output-line-/);
   assert.ok(!output.includes("output-line-150"));
 });

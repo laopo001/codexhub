@@ -1,7 +1,7 @@
 import { recordsToViews, type CodexRecordView } from "../core/codexRecordView.js";
-import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
+import { type CodexRecord } from "../shared/recordTypes.js";
 
-export type ConversationStreamOutput = "normal" | "raw";
+import { toolPresentation } from "./conversationToolPresentation.js";
 
 export type ConversationThreadTarget = {
   threadId: string;
@@ -24,17 +24,7 @@ export type ConversationStreamEvent =
       record?: CodexRecord;
     };
 
-export type ConversationStreamError = {
-  threadId?: string;
-  message: string;
-};
-
-export type ConversationStreamCompletion = {
-  threadId: string;
-  lastSeq: number;
-  submissionId?: string;
-  delivery?: string;
-};
+export type ConversationStreamError = { message: string };
 
 type StreamWriter = (chunk: string) => void;
 
@@ -50,50 +40,16 @@ type AssistantStreamState = {
  */
 export class ConversationStreamRenderer {
   private readonly previousViews = new Map<string, CodexRecordView>();
-  private readonly completedToolRecordIds = new Set<string>();
+  private readonly tools = new Map<string, { name: string; called: boolean; completed: boolean }>();
   private assistantStream: AssistantStreamState | undefined;
 
-  constructor(
-    private readonly output: ConversationStreamOutput,
-    private readonly write: StreamWriter = (chunk) => process.stdout.write(chunk)
-  ) {}
+  constructor(private readonly write: StreamWriter = (chunk) => process.stdout.write(chunk)) {}
 
   threadStarted(target: ConversationThreadTarget) {
-    if (this.output === "raw") {
-      this.writeJson({
-        version: 1,
-        type: "codexhub.thread.started",
-        threadId: target.threadId,
-        machineId: target.machineId,
-        cwd: target.cwd
-      });
-      return;
-    }
-    this.writeNormal(`Thread ID: ${target.threadId}`);
+    this.write(`Thread ID: ${target.threadId}\n`);
   }
 
   event(event: ConversationStreamEvent) {
-    if (this.output === "raw") {
-      if (event.kind === "record") {
-        this.writeJson({
-          version: 1,
-          type: "codexhub.record",
-          threadId: event.threadId,
-          ...(event.seq === undefined ? {} : { seq: event.seq }),
-          record: event.record
-        });
-      } else {
-        this.writeJson({
-          version: 1,
-          type: "codexhub.record_delta",
-          threadId: event.threadId,
-          ...(event.seq === undefined ? {} : { seq: event.seq }),
-          delta: event.delta
-        });
-      }
-      return;
-    }
-
     const record = event.record;
     if (!record) return;
     const [view] = recordsToViews([record]);
@@ -114,32 +70,12 @@ export class ConversationStreamRenderer {
   }
 
   error(error: ConversationStreamError) {
-    if (this.output === "raw") {
-      this.writeJson({
-        version: 1,
-        type: "codexhub.error",
-        ...(error.threadId ? { threadId: error.threadId } : {}),
-        message: error.message
-      });
-      return;
-    }
     this.flushAssistant();
     this.writeBlock("error", error.message);
   }
 
-  completed(completion: ConversationStreamCompletion) {
-    if (this.output !== "raw") {
-      this.flushAssistant();
-      return;
-    }
-    this.writeJson({
-      version: 1,
-      type: "codexhub.turn.completed",
-      threadId: completion.threadId,
-      lastSeq: completion.lastSeq,
-      ...(completion.submissionId ? { submissionId: completion.submissionId } : {}),
-      ...(completion.delivery ? { delivery: completion.delivery } : {})
-    });
+  completed() {
+    this.flushAssistant();
   }
 
   private renderAssistant(view: CodexRecordView, previous: CodexRecordView | undefined) {
@@ -204,28 +140,19 @@ export class ConversationStreamRenderer {
     if (!stream.text.endsWith("\n")) this.write("\n");
   }
 
-  private renderTool(view: CodexRecordView, previous: CodexRecordView | undefined) {
-    const textChanged = !previous || previous.text !== view.text;
-    const labelChanged = !previous || previous.label !== view.label;
-    if (previous && !textChanged && !labelChanged
-      && previous.status === view.status && previous.statusText === view.statusText) return;
-
-    if (isToolStartView(view)) {
-      const startText = toolStartText(view);
-      if (!previous || startText !== toolStartText(previous) || labelChanged) {
-        this.writeBlock(view.label, startText);
-      }
-      return;
+  private renderTool(view: CodexRecordView, _previous: CodexRecordView | undefined) {
+    const tool = toolPresentation(view);
+    const state = this.tools.get(tool.key) ?? { name: tool.name, called: false, completed: false };
+    this.tools.set(tool.key, state);
+    if (!tool.outputOnly && !state.called) {
+      state.name = tool.name;
+      state.called = true;
+      this.writeBlock("tool_call", `${tool.name}${tool.parameters ? `\n${tool.parameters}` : ""}`);
     }
-
-    this.writeToolResult(view);
-  }
-
-  private writeToolResult(view: CodexRecordView) {
-    if (this.completedToolRecordIds.has(view.id) && !isFailedView(view)) return;
-    const text = isSuccessfulToolOutput(view) ? trimSuccessfulToolOutput(view.text) : view.text;
-    this.writeBlock(view.label, text);
-    if (view.status === "completed" || isFailedView(view)) this.completedToolRecordIds.add(view.id);
+    if (tool.terminal && !state.completed) {
+      state.completed = true;
+      this.writeBlock("tool_result", `${state.name}\n${tool.result}`);
+    }
   }
 
   private renderErrorView(view: CodexRecordView, previous: CodexRecordView | undefined) {
@@ -240,55 +167,7 @@ export class ConversationStreamRenderer {
     if (!text.endsWith("\n")) this.write("\n");
   }
 
-  private writeNormal(text: string) {
-    this.write(`${text}\n`);
-  }
-
-  private writeJson(value: Record<string, unknown>) {
-    this.write(`${JSON.stringify(value)}\n`);
-  }
 }
 
 const isVisibleView = (view: CodexRecordView) =>
   view.role === "codex" || view.role === "tool" || view.role === "error";
-
-const isToolView = (view: CodexRecordView) => view.role === "tool";
-
-const isToolStartView = (view: CodexRecordView) =>
-  view.status === "pending" || view.status === "in_progress";
-
-const toolStartText = (view: CodexRecordView) => {
-  const payload = asRecord(view.record.payload);
-  if (payload?.type === "local_shell_call") return view.text.split("\n", 1)[0] ?? "";
-  return view.text;
-};
-
-const isSuccessfulToolOutput = (view: CodexRecordView) => {
-  if (!isToolView(view) || view.status !== "completed" || isFailedView(view)) return false;
-  const payload = asRecord(view.record.payload);
-  const type = typeof payload?.type === "string" ? payload.type : "";
-  return type === "local_shell_call"
-    || type === "mcp_tool_call"
-    || type.endsWith("_output");
-};
-
-const isFailedView = (view: CodexRecordView) => {
-  if (view.status === "failed") return true;
-  const payload = asRecord(view.record.payload);
-  const status = typeof payload?.status === "string"
-    ? payload.status.trim().replace(/[-\s]+/g, "_").toLowerCase()
-    : "";
-  return ["failed", "failure", "error", "errored", "declined", "denied", "interrupted", "aborted", "cancelled", "canceled"].includes(status)
-    || payload?.error !== undefined && payload.error !== null;
-};
-
-const trimSuccessfulToolOutput = (text: string) => {
-  const lines = text.split("\n");
-  if (lines.length <= 10) return text;
-  const omitted = lines.length - 10;
-  return [
-    ...lines.slice(0, 5),
-    `… ${omitted} lines omitted …`,
-    ...lines.slice(-5)
-  ].join("\n");
-};

@@ -68,6 +68,7 @@ test("conversation CLI creates, resumes, names, and sends through --connect with
       "--connect", fixture.childUrl,
       "send", first.threadId, "third cli input",
       "--cwd", cwd,
+      "--wait",
       "--timeout", "20",
       "--json"
     ]);

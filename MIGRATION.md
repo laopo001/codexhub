@@ -2,13 +2,13 @@
 
 `codexhub start` / `send` 未指定地址时确保默认本地 server 可用，再创建或恢复对话；server 在 CLI 退出后继续运行。`--connect`、兼容的 `--server` 或非空 `CODEX_HUB_SERVER_URL` 仍只连接指定后端，不可达时报错。
 
-`delegate-codex` 移除独立 `codex exec` 分支，始终调用 CodexHub。未配置地址时自动使用本地 server；`--cd` 在本地新任务中可省略。`--continue` 继续使用明确 threadId；`--add-dir` 不再有独立 CLI 回退，仍明确拒绝。旧 direct 输出过滤/日志与 `DELEGATE_CODEX_BIN` 不再适用；需要覆盖可执行入口时使用 `DELEGATE_CODEX_HUB_BIN`。
+`delegate-to-codex` skill 的委派说明直接调用 CodexHub。未配置地址时自动使用本地 server；直接使用 `codexhub` 时本地新任务的 `--cwd` 可省略。续接继续使用明确 threadId；不支持的目录扩展选项仍明确拒绝。旧 direct 输出过滤/日志与独立 Codex 执行入口不再适用。
 
 # 对话 CLI（未发布）
 
-对话 CLI 增加 `--model`、`--effort`、`--stream --output normal|raw` 和 stdin `-` 输入。配合更新后的 `delegate-to-codex`，`delegate-codex --connect <后端>` 将任务创建为该后端的 thread，并使用准确 threadId 继续任务；不指定连接时使用默认本地 server 的复用/自动启动路径。Web 通过现有 thread picker 查看同一会话，不需要迁移历史或新增父子任务模型。
+对话 CLI 增加 `--model`、`--effort`、可读文本 `--stream` 和 stdin `-` 输入。`delegate-to-codex` skill 的委派说明直接使用 `codexhub --connect <后端>` 创建该后端的 thread，并使用准确 threadId 继续任务；不指定连接时使用默认本地 server 的复用/自动启动路径。Web 通过现有 thread picker 查看同一会话，不需要迁移历史或新增父子任务模型。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
 
-新增 `codexhub start <input> --name <name>` 创建命名 thread 并发送消息，`codexhub send <threadId> <input>` 继续同一会话。全局 `--connect` / `CODEX_HUB_SERVER_URL` 选择已有本机或远端 CodexHub 后端，认证使用 `CODEX_HUB_AUTH_TOKEN`。默认等待回复，`--no-wait` 在后端确认投递后退出。会话仍由官方 threadId 标识，不新增公共 session 模型或本地会话存储，也不会为每条命令新起 runtime。
+新增 `codexhub start <input> --name <name>` 创建命名 thread 并发送消息，`codexhub send <threadId> <input>` 继续同一会话。全局 `--connect` / `CODEX_HUB_SERVER_URL` 选择已有本机或远端 CodexHub 后端，认证使用 `CODEX_HUB_AUTH_TOKEN`。start 默认等待回复；send 默认只返回投递确认，`--wait` 等待最终结果，`--stream` 实时输出，`--no-wait` 保留为显式投递确认选项。`--no-wait` 不得与 `--wait` 或 `--stream` 混用。会话仍由官方 threadId 标识，不新增公共 session 模型或本地会话存储，也不会为每条命令新起 runtime。
 
 连接参数首选 `--connect <url>`，旧 `--server <url>` 继续兼容；同时传入不同地址时明确报错。`register --to` 仍表示父注册目标。
 

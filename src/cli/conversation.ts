@@ -5,7 +5,7 @@ import type { CodexRecord } from "../shared/recordTypes.js";
 import { asRecord } from "../shared/recordTypes.js";
 import { messageTextFromPayload } from "../shared/taskNotifications.js";
 import type { MachineSummary } from "../shared/machineTypes.js";
-import type { ThreadDetail, ThreadRunOptions } from "../shared/threadTypes.js";
+import type { ThreadDetail, ThreadQueueItem, ThreadRunOptions } from "../shared/threadTypes.js";
 import type { ThreadTurnPayload } from "../shared/apiContract.js";
 import type {
   ConversationStreamEvent,
@@ -28,6 +28,7 @@ type RealtimeThreadMessage = {
   snapshot?: { reset?: boolean };
   message?: string;
   scope?: string;
+  queue?: ThreadQueueItem[];
 };
 
 export type ConversationRunOptions = {
@@ -344,7 +345,7 @@ const turnOptionsFrom = (options: ConversationRunOptions): Pick<ThreadRunOptions
   };
 };
 
-const requestJson = async <T>(
+export const requestJson = async <T>(
   baseUrl: string,
   pathname: string,
   init: RequestInit = {},
@@ -469,6 +470,8 @@ class ThreadSubscription {
   private failureError: Error | undefined;
   private maxLiveSeq = 0;
   private baselineCaptured = false;
+  private queue: ThreadQueueItem[] = [];
+  private queueObserved = false;
 
   private constructor(
     private readonly baseUrl: string,
@@ -572,6 +575,10 @@ class ThreadSubscription {
       return;
     }
     if (message.threadId !== this.threadId) return;
+    if (Array.isArray(message.queue)) {
+      this.queue = message.queue;
+      this.queueObserved = true;
+    }
     if (!message.historical && typeof message.seq === "number") {
       this.maxLiveSeq = Math.max(this.maxLiveSeq, message.seq);
       this.resolveLiveSeqWaiters();
@@ -639,6 +646,13 @@ class ThreadSubscription {
     this.baselineCaptured = true;
     this.liveChangedRecordIds.clear();
     return new Map(this.records);
+  }
+
+  queuedSubmissionIds() {
+    if (!this.queueObserved) {
+      throw new RealtimeError("CodexHub realtime thread snapshot did not include a queue field.");
+    }
+    return this.queue.map((item) => item.submissionId);
   }
 
   assistantChanges(baseline: Map<string, CodexRecord>) {
@@ -727,6 +741,21 @@ class ThreadSubscription {
     this.socket?.terminate();
   }
 }
+
+export const loadQueuedSubmissionIds = async (
+  baseUrl: string,
+  authToken: string | undefined,
+  threadId: string,
+  timeoutMs: number,
+  signal: AbortSignal
+) => {
+  const subscription = await ThreadSubscription.open(baseUrl, authToken, threadId, timeoutMs, signal);
+  try {
+    return subscription.queuedSubmissionIds();
+  } finally {
+    subscription.close();
+  }
+};
 
 const assistantText = (record: CodexRecord | undefined) => {
   if (!record) return null;

@@ -153,11 +153,14 @@ CLI 可以直接启动对话，或连接指定的 CodexHub 后端：
 # 未配置后端地址时，先复用或自动启动默认本地 server，再创建对话
 codexhub start "分析这个项目的结构" --name "项目分析"
 
-# 使用 start 输出的 threadId 继续对话；运行中发送由后端处理 steer 或排队
+# 使用 start 输出的 threadId 继续对话；send 默认只返回投递确认
 codexhub send <threadId> "先关注注册流程"
 
-# 提交后立即退出，任务继续在后端执行
-codexhub send <threadId> "补充测试" --no-wait
+# 显式等待本轮最终结果
+codexhub send <threadId> "补充测试" --wait
+
+# 显式等待并实时观察可读文本
+codexhub send <threadId> "继续测试" --stream
 
 # 连接另一台 CodexHub 后端；cwd 是目标 machine 上的路径
 codexhub --connect http://remote-host:8788 start "分析这个项目" --name "远程分析" --cwd /srv/project
@@ -168,13 +171,13 @@ codexhub --connect http://remote-host:8788 send <threadId> "继续分析"
 
 默认选择目标后端的在线 local machine，显式 `--machine <machineId>` 可以选择其 SSH 或 registered machine。CLI 中的会话就是现有 `thread`，复用同一个 machine runtime。
 
-默认等待本次提交执行完成后，显示该会话订阅期间的新增回复；排队期间也可能显示当前轮的后续回复。`--no-wait` 只等待后端接受消息；Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动默认本地 server（默认 loopback 的 `8788`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
+`start` 默认等待本次提交执行完成；`send` 默认只等待后端接受投递，使用 `--wait` 才等待最终结果，使用 `--stream` 才实时输出 canonical records。`--no-wait` 仍可显式请求投递确认，但不能与 `--wait` 或 `--stream` 混用；Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动默认本地 server（默认 loopback 的 `8788`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
 
-默认等待模式需要更新后的后端支持 `POST /api/threads/:threadId/turn?wait=true`；`--timeout <秒>` 可调整等待上限，`--json` 输出适合脚本读取的结果。
+`--wait` 和 `--stream` 等待模式需要更新后的后端支持 `POST /api/threads/:threadId/turn?wait=true`；`--timeout <秒>` 可调整等待上限，`--json` 输出适合脚本读取的结果。
 
 自动启动会验证端口上的 CodexHub 身份、当前数据目录和认证配置，不接管其它服务或自动换端口。启动日志位于数据目录的 `local-server-<端口>.log`；默认启动上限为 120 秒，可用 `CODEX_HUB_LOCAL_SERVER_START_TIMEOUT_MS` 调整，且不会超过本次 `--timeout` 的剩余预算。
 
-需要在终端实时观察执行时，使用 `--stream`。`--model` 和 `--effort` 指定本次发送的模型与推理强度；未指定则沿用后端设置。`--stream --output normal` 显示消息和工具进度，成功的长工具输出保留前后各 5 行，失败输出完整显示；`--stream --output raw` 输出带版本字段的 CodexHub JSONL 事件。`--json` 仍是完成后的单个 JSON 结果，与 `--stream` 分开使用。
+需要在终端实时观察执行时，使用 `--stream`，保留 `[commentary]`、`[final_answer]`，用 `[tool_call]` 显示工具名与关键参数，用 `[tool_result]` 显示完成状态和已有耗时。成功结果正文隐藏，长参数与失败诊断截断，等待期间不追加心跳。`--json` 仍是完成后的单个 JSON 结果，与 `--stream` 分开使用。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
 
 ```bash
 codexhub --connect http://host:8788 start "检查项目结构" \
@@ -185,31 +188,34 @@ codexhub --connect http://host:8788 start "检查项目结构" \
 cat task.txt | codexhub --connect http://host:8788 send <threadId> - --stream
 ```
 
-配合已安装的 `delegate-to-codex` skill，可以让委派任务进入同一后端：
+已安装的 `delegate-to-codex` skill 仍提供委派约定说明；实际命令直接使用 CodexHub：
 
 ```bash
-delegate-codex --connect http://host:8788 --cd /srv/project \
-  --name "Luna 注册流程检查" "检查注册流程并补充测试"
-delegate-codex --connect http://host:8788 --continue <threadId> "先处理测试失败"
+codexhub --connect http://host:8788 start "检查注册流程并补充测试" \
+  --name "Luna 注册流程检查" --cwd /srv/project \
+  --model gpt-5.6-luna --effort xhigh
+codexhub --connect http://host:8788 send <threadId> "先处理测试失败" --wait --cwd /srv/project
 ```
 
-`delegate-codex` 始终调用 CodexHub，不再运行 `codex exec`。不配置地址时，本地任务只需要：
+不配置地址时，本地任务只需要：
 
 ```bash
-delegate-codex --name "Luna 检查" "检查当前项目"
+codexhub start "检查当前项目" --name "Luna 检查" \
+  --model gpt-5.6-luna --effort xhigh
 ```
 
 也可以设置默认后端，省略每次的 `--connect`：
 
 ```bash
 export CODEX_HUB_SERVER_URL="http://host:8788"
-delegate-codex --cd /srv/project --name "Luna 检查" "检查项目"
-delegate-codex --continue <threadId> "继续检查"
+codexhub start "检查项目" --name "Luna 检查" --cwd /srv/project \
+  --model gpt-5.6-luna --effort xhigh
+codexhub send <threadId> "继续检查" --wait --cwd /srv/project
 ```
 
-显式 `--connect` 优先于环境变量。将 `export` 放入 `~/.zshrc` 可供后续终端使用；未设置或空值时走默认本地 server 的复用/自动启动路径。临时使用默认本地后端可执行 `env -u CODEX_HUB_SERVER_URL delegate-codex ...`。
+显式 `--connect` 优先于环境变量。将 `export` 放入 `~/.zshrc` 可供后续终端使用；未设置或空值时走默认本地 server 的复用/自动启动路径。
 
-`delegate-codex` 默认使用 `gpt-5.6-luna` 和 `xhigh`，始终通过 CodexHub 创建或续接 thread；显式指定的后端不可用时明确失败。打开同一后端的 Web，选择对应 machine 和项目目录，在 thread picker 中按名称或 threadId 打开该会话，即可查看委派指令、回复和工具执行记录。CLI 不会自动改变浏览器已有的 tabs。`--continue` 必须使用原后端和准确 threadId；后端模式不支持 `--add-dir`，需要的权限应在目标后端配置。
+CodexHub CLI 通过同一后端创建或续接 thread；显式指定的后端不可用时明确失败。打开同一后端的 Web，选择对应 machine 和项目目录，在 thread picker 中按名称或 threadId 打开该会话，即可查看指令、回复和工具执行记录。CLI 不会自动改变浏览器已有的 tabs。发送必须使用原后端和准确 threadId；需要的权限应在目标后端配置。
 
 server 在线时，每台 machine 最多维护一个官方 app-server runtime；内部进程代次使用 `sessionId` 传输，但公共 API、Web state、task history 和 thread 投影都以稳定 `machineId` 表达。该 runtime 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。`/api/runtimes` 按 machine 投影当前状态，不暴露内部 session ID 或 app-server URL。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/runtimes/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 runtime 投影，Web 合并两者展示。Thread Model 和 Composer Permissions 分别通过 `/api/machines/:machineId/models`、`/api/machines/:machineId/permission-profiles` 读取当前在线 runtime 的 catalog，不写入 `config.yaml`，也不维护静态 fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
 

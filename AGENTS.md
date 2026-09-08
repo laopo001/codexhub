@@ -101,9 +101,9 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## CLI 模型
 
 1. 顶层 CLI 提供 `server`、`machine`、`register`、`start`、`send`、`ssh`、`task`、`install-vscode`。`start <input> --name <name>` 创建 thread 并发送首条消息，`send <threadId> <input>` 继续对话；全局 `--connect` 选择已有 CodexHub HTTP 后端；`--server` 是兼容别名，显式指定不同地址时拒绝执行。未指定后端地址的对话命令负责确保默认本地 server 已启动，复用同一 server 的 machine/runtime；显式地址不可达时不启动替代实例。自动 server 必须 detached、并发去重并验证端口上的服务身份，不能因 CLI 退出停止。对话命令不直接启动 app-server，也不维护本地会话数据库。安装命令只负责安装 npm 包内共享的 VSIX；未知命令直接报错，不保留根级 prompt 兼容入口。
-2. CLI 和 Web 复用 `/api/machines/:machineId/threads` 创建或恢复 thread，通过现有 thread name/turn API 命名和发送，并通过 `/api/events/ws` 读取权威回复。CLI 必须显式保留目标 threadId；运行中的 steer、排队和 Goal 投递由后端决定。默认等待回复，`--no-wait` 仅等待投递确认；退出客户端不停止后端执行。历史浏览仍使用 Web/API。模型目录来自该 machine 当前在线 runtime 的 app-server `model/list`，通过 `/api/machines/:machineId/models` 暴露，不在 `config.yaml` 持久化。
+2. CLI 和 Web 复用 `/api/machines/:machineId/threads` 创建或恢复 thread，通过现有 thread name/turn API 命名和发送，并通过 `/api/events/ws` 读取权威回复。CLI 必须显式保留目标 threadId；运行中的 steer、排队和 Goal 投递由后端决定。start 默认等待回复；send 无 `--wait` 或 `--stream` 时默认只等待投递确认，`--wait` 等待最终结果，`--stream` 实时输出；显式 `--no-wait` 仍只等待投递确认，且不能与 `--wait` 或 `--stream` 混用。退出客户端不停止后端执行。历史浏览仍使用 Web/API。模型目录来自该 machine 当前在线 runtime 的 app-server `model/list`，通过 `/api/machines/:machineId/models` 暴露，不在 `config.yaml` 持久化。
 3. `--sandbox`、`--approval-policy` 只有用户显式传参时才作为 app-server override 转发；不要偷偷发明默认权限策略。
-4. 对话 CLI 的 `--model` / `--effort` 通过共享 turn options 传递；`--stream` 从同一 `/api/events/ws` 实时输出 canonical records，normal 复用 record view，raw 输出版本化 CodexHub JSONL，不伪造 `codex exec` 事件。`delegate-codex` 始终是这一入口的客户端，不保留 `codex exec` 路径；不创建另一套任务/会话数据库，也不隐式改变 Web surface 的 open tabs。会话通过现有 thread picker 查看。
+4. 对话 CLI 的 `--model` / `--effort` 通过共享 turn options 传递；`--stream` 从同一 `/api/events/ws` 实时输出可读文本，保留 canonical records 作为内部来源，不伪造 `codex exec` 事件。`delegate-to-codex` skill 的委派说明直接调用这一 `codexhub` 入口；不创建另一套任务/会话数据库，也不隐式改变 Web surface 的 open tabs。排查时按准确 `threadId` 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。会话通过现有 thread picker 查看。
 4. CLI 默认通过 `loadDotEnv()` 读取当前 cwd 的 `.env`，并且只填补未设置的环境变量。跨目录运行 `cxh` 时要先核对 cwd 和环境来源。
 5. 发布后的 bin 必须是 `#!/usr/bin/env node` + `dist-node` 编译产物，不依赖全局 `tsx`。
 

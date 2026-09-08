@@ -14,9 +14,11 @@ import {
 import { runCodexhubMachine } from "./codexhubMachine.js";
 import { runConversation, type ConversationRunOptions, ConversationInterruptedError } from "./conversation.js";
 import {
-  ConversationStreamRenderer,
-  type ConversationStreamOutput
-} from "./conversationStreamRenderer.js";
+  runConversationControl,
+  type ConversationControlOperation,
+  type ConversationControlResult
+} from "./conversationControl.js";
+import { ConversationStreamRenderer } from "./conversationStreamRenderer.js";
 import { defaultLocalServerUrl, ensureLocalServer } from "./localServerBootstrap.js";
 import { registerParent, resolveRegisterParentTarget } from "./registerParent.js";
 import { threadRunOptionsSchema } from "../shared/apiContract.js";
@@ -79,9 +81,15 @@ type ConversationCommandOptions = {
   model?: string;
   effort?: string;
   stream?: boolean;
-  output?: string;
   wait?: boolean;
   noWait?: boolean;
+  noWaitExplicit?: boolean;
+  waitExplicit?: boolean;
+  json?: boolean;
+  timeout?: string;
+};
+
+type ConversationControlCommandOptions = {
   json?: boolean;
   timeout?: string;
 };
@@ -189,10 +197,16 @@ program
   .option("--model <model>", "model override for this turn")
   .option("--effort <effort>", "reasoning effort override for this turn")
   .option("--stream", "stream canonical records as they arrive")
-  .option("--output <mode>", "stream output mode: normal or raw")
   .option("--no-wait", "return after the backend accepts the submission")
+  .option("--wait", "wait for the final result")
   .option("--timeout <seconds>", "wait timeout in seconds", String(600))
   .option("--json", "print a JSON result")
+  .on("option:no-wait", function(this: Command) {
+    this.setOptionValue("noWaitExplicit", true);
+  })
+  .on("option:wait", function(this: Command) {
+    this.setOptionValue("waitExplicit", true);
+  })
   .description("Create a thread, name it, and send its first message")
   .action(async (input: string, options: ConversationCommandOptions) => {
     await runConversationCommand({
@@ -204,8 +218,7 @@ program
       model: options.model,
       effort: options.effort,
       stream: options.stream,
-      output: options.output,
-      noWait: options.wait === false,
+      noWait: resolveConversationNoWait("start", options),
       json: options.json,
       timeout: options.timeout
     });
@@ -220,10 +233,16 @@ program
   .option("--model <model>", "model override for this turn")
   .option("--effort <effort>", "reasoning effort override for this turn")
   .option("--stream", "stream canonical records as they arrive")
-  .option("--output <mode>", "stream output mode: normal or raw")
   .option("--no-wait", "return after the backend accepts the submission")
+  .option("--wait", "wait for the final result")
   .option("--timeout <seconds>", "wait timeout in seconds", String(600))
   .option("--json", "print a JSON result")
+  .on("option:no-wait", function(this: Command) {
+    this.setOptionValue("noWaitExplicit", true);
+  })
+  .on("option:wait", function(this: Command) {
+    this.setOptionValue("waitExplicit", true);
+  })
   .description("Resume a thread and send a message")
   .action(async (threadId: string, input: string, options: ConversationCommandOptions) => {
     await runConversationCommand({
@@ -235,12 +254,25 @@ program
       model: options.model,
       effort: options.effort,
       stream: options.stream,
-      output: options.output,
-      noWait: options.wait === false,
+      noWait: resolveConversationNoWait("send", options),
       json: options.json,
       timeout: options.timeout
     });
   });
+
+for (const operation of ["stop", "end"] as const) {
+  program
+    .command(operation)
+    .argument("<threadId>", "official Codex thread id")
+    .option("--timeout <seconds>", "wait timeout in seconds", String(600))
+    .option("--json", "print a JSON result")
+    .description(operation === "stop"
+      ? "Stop the current thread turn and wait until it is idle"
+      : "End this delegation by cancelling queued messages and stopping the current turn")
+    .action(async (threadId: string, options: ConversationControlCommandOptions) => {
+      await runConversationControlCommand(operation, threadId, options);
+    });
+}
 
 program
   .command("register")
@@ -461,7 +493,7 @@ program.parseAsync(process.argv).catch((error: unknown) => {
 async function runConversationCommand(
   options: ConversationCommandOptions & Pick<ConversationRunOptions, "operation" | "input"> & { threadId?: string }
 ) {
-  const output = validateConversationCommand(options);
+  validateConversationCommand(options);
   const timeoutSeconds = parseTimeoutSecondsOption(options.timeout);
   const json = options.json === true;
   const input = await readConversationInput(options.input);
@@ -476,7 +508,7 @@ async function runConversationCommand(
   if (remainingTimeoutMs <= 0) throw new Error("CLI conversation timeout expired during local server startup; no turn was submitted.");
   const remainingTimeoutSeconds = remainingTimeoutMs / 1000;
   const renderer = options.stream
-    ? new ConversationStreamRenderer(output)
+    ? new ConversationStreamRenderer()
     : undefined;
   const result = await runConversation({
     operation: options.operation,
@@ -497,7 +529,7 @@ async function runConversationCommand(
       : json ? undefined : (target) => console.log(`Thread ID: ${target.threadId}`),
     onStreamEvent: renderer ? (event) => renderer.event(event) : undefined,
     onError: renderer
-      ? (error, target) => renderer.error({ threadId: target?.threadId, message: error.message })
+      ? (error) => renderer.error({ message: error.message })
       : undefined
   });
   if (renderer) {
@@ -505,12 +537,7 @@ async function runConversationCommand(
       // The HTTP response and this lastSeq wait are the completion boundary;
       // stream records themselves were emitted by the WS callback above.
       if (result.lastSeq === undefined) throw new Error("CodexHub completed a stream without a lastSeq barrier.");
-      renderer.completed({
-        threadId: result.threadId,
-        lastSeq: result.lastSeq,
-        submissionId: result.submissionId,
-        delivery: result.delivery
-      });
+      renderer.completed();
     }
     return;
   }
@@ -526,6 +553,42 @@ async function runConversationCommand(
     return;
   }
   for (const text of result.assistant) console.log(text);
+}
+
+async function runConversationControlCommand(
+  operation: ConversationControlOperation,
+  threadId: string,
+  options: ConversationControlCommandOptions
+) {
+  const timeoutSeconds = parseTimeoutSecondsOption(options.timeout);
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  const backend = await resolveConversationBackend(undefined, deadline);
+  console.error(`codexhub backend: ${new URL(backend.baseUrl).origin} (${backend.status})`);
+  const remainingTimeoutMs = deadline - Date.now();
+  if (remainingTimeoutMs <= 0) {
+    throw new Error("CLI conversation timeout expired during local server startup; thread control was not submitted.");
+  }
+  const result: ConversationControlResult = await runConversationControl({
+    operation,
+    threadId,
+    baseUrl: backend.baseUrl,
+    authToken: process.env.CODEX_HUB_AUTH_TOKEN,
+    timeoutSeconds: remainingTimeoutMs / 1000
+  });
+  if (options.json) {
+    console.log(JSON.stringify(result));
+    return;
+  }
+  if (operation === "stop") {
+    console.log(result.stopped
+      ? `Stopped thread ${threadId}; canonical running=false.`
+      : `Thread ${threadId} was already idle; canonical running=false.`);
+    return;
+  }
+  console.log(
+    `Ended delegation for thread ${threadId}; cancelled ${result.cancelledSubmissionIds.length} queued message(s), `
+    + "canonical running=false; history retained and the thread remains resumable."
+  );
 }
 
 async function resolveConversationBackend(cwd: string | undefined, deadline: number) {
@@ -544,20 +607,23 @@ async function resolveConversationBackend(cwd: string | undefined, deadline: num
   });
 }
 
-function validateConversationCommand(options: ConversationCommandOptions): ConversationStreamOutput {
+function resolveConversationNoWait(operation: "start" | "send", options: ConversationCommandOptions) {
+  const explicitNoWait = options.noWaitExplicit === true;
+  const explicitWait = options.waitExplicit === true;
+  if (explicitNoWait && explicitWait) throw new Error("--wait cannot be combined with --no-wait.");
+  if (explicitNoWait && options.stream === true) throw new Error("--stream cannot be combined with --no-wait.");
+  return explicitNoWait || operation === "send" && !explicitWait && options.stream !== true;
+}
+
+function validateConversationCommand(options: ConversationCommandOptions) {
   const stream = options.stream === true;
   if (stream && options.json) throw new Error("--stream cannot be combined with --json.");
   if (stream && options.noWait) throw new Error("--stream cannot be combined with --no-wait.");
-  if (!stream && options.output !== undefined) throw new Error("--output is only valid with --stream.");
-  if (options.output !== undefined && options.output !== "normal" && options.output !== "raw") {
-    throw new Error("--output must be normal or raw.");
-  }
   const parsed = threadRunOptionsSchema.safeParse({
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { modelReasoningEffort: options.effort })
   });
   if (!parsed.success) throw new Error(`Invalid conversation turn options: ${parsed.error.issues[0]?.message ?? "invalid options"}`);
-  return options.output === "raw" ? "raw" : "normal";
 }
 
 async function readConversationInput(input: string) {
