@@ -91,7 +91,11 @@ test("HTTP turn response waits for the child delivery acknowledgement", async ()
   hub.attachSessionThread("session", "thread", "/tmp/backend-review");
   const app = Fastify();
   await app.register(websocket);
-  registerThreadRoutes(app, { threads: hub } as Parameters<typeof registerThreadRoutes>[1]);
+  registerThreadRoutes(app, {
+    threads: hub,
+    retainThreadRecordSubscription: () => undefined,
+    releaseThreadRecordSubscription: () => undefined
+  } as unknown as Parameters<typeof registerThreadRoutes>[1]);
   try {
     const response = await app.inject({ method: "POST", url: "/api/threads/thread/turn", payload: { input: "queued input" } });
     assert.equal(response.statusCode, 200);
@@ -100,6 +104,152 @@ test("HTTP turn response waits for the child delivery acknowledgement", async ()
     assert.equal(response.json().queued, true);
   } finally {
     await app.close();
+  }
+});
+
+test("HTTP wait=true waits for local dispatch completion while default ack stays immediate", async () => {
+  const { default: Fastify } = await import("fastify");
+  const { default: websocket } = await import("@fastify/websocket");
+  const { registerThreadRoutes } = await import("../../src/server/threadRoutes.js");
+  const hub = new ThreadHub();
+  hub.registerSession({ sessionId: "session", machineId: "machine", workingDirectory: "/tmp/backend-review" });
+  hub.attachSessionThread("session", "thread", "/tmp/backend-review");
+  const app = Fastify();
+  await app.register(websocket);
+  registerThreadRoutes(app, {
+    threads: hub,
+    retainThreadRecordSubscription: () => undefined,
+    releaseThreadRecordSubscription: () => undefined
+  } as unknown as Parameters<typeof registerThreadRoutes>[1]);
+  try {
+    const request = app.inject({
+      method: "POST",
+      url: "/api/threads/thread/turn?wait=true",
+      payload: { input: "wait for completion" }
+    });
+    const commands = await hub.waitSessionCommands("session", 0, 1);
+    const turn = commands.commands.at(-1);
+    assert.equal(turn?.type, "turn");
+    const returnedEarly = await Promise.race([
+      request.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 30))
+    ]);
+    assert.equal(returnedEarly, false);
+    hub.applySessionEvent("session", executionChanged("thread", true, "wait-turn"));
+    hub.applySessionEvent("session", turnCompleted("thread", "wait-turn"));
+    const response = await request;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().delivery, "turn");
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP wait=true for steer waits past steer ACK until the targeted active turn ends", async () => {
+  const { default: Fastify } = await import("fastify");
+  const { default: websocket } = await import("@fastify/websocket");
+  const { registerThreadRoutes } = await import("../../src/server/threadRoutes.js");
+  const hub = new ThreadHub();
+  hub.registerSession({ sessionId: "session", machineId: "machine", workingDirectory: "/tmp/backend-review" });
+  hub.attachSessionThread("session", "thread", "/tmp/backend-review");
+  hub.applySessionEvent("session", executionChanged("thread", true, "active-turn"));
+  const app = Fastify();
+  await app.register(websocket);
+  registerThreadRoutes(app, {
+    threads: hub,
+    retainThreadRecordSubscription: () => undefined,
+    releaseThreadRecordSubscription: () => undefined
+  } as unknown as Parameters<typeof registerThreadRoutes>[1]);
+  try {
+    const request = app.inject({
+      method: "POST",
+      url: "/api/threads/thread/turn?wait=true",
+      payload: { input: "steer the active turn" }
+    });
+    const commands = await hub.waitSessionCommands("session", 0, 1);
+    const steer = commands.commands.at(-1);
+    assert.equal(steer?.type, "steer");
+    if (!steer) throw new Error("steer command was not queued");
+    hub.resolveSessionCommand("session", steer.commandId, { ok: true });
+    const returnedAfterAck = await Promise.race([
+      request.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 30))
+    ]);
+    assert.equal(returnedAfterAck, false);
+    hub.applySessionEvent("session", turnCompleted("thread", "active-turn"));
+    const response = await request;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().delivery, "steer");
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP wait=true follows delayed remote completion and returns remote failures", async () => {
+  const { default: Fastify } = await import("fastify");
+  const { default: websocket } = await import("@fastify/websocket");
+  const { registerThreadRoutes } = await import("../../src/server/threadRoutes.js");
+  let finish!: () => void;
+  const completion = new Promise<void>((resolve) => { finish = resolve; });
+  const hub = new ThreadHub({}, {
+    remoteBackend: {
+      execute: async () => ({ submissionId: "remote-submission", delivery: "turn", accepted: true }),
+      waitForCompletion: async () => completion
+    }
+  });
+  hub.registerSession({ sessionId: "session", machineId: "machine", workingDirectory: "/tmp/backend-review", transportRole: "backend" });
+  hub.attachSessionThread("session", "thread", "/tmp/backend-review");
+  const app = Fastify();
+  await app.register(websocket);
+  registerThreadRoutes(app, {
+    threads: hub,
+    retainThreadRecordSubscription: () => undefined,
+    releaseThreadRecordSubscription: () => undefined
+  } as unknown as Parameters<typeof registerThreadRoutes>[1]);
+  try {
+    const request = app.inject({
+      method: "POST",
+      url: "/api/threads/thread/turn?wait=true",
+      payload: { input: "remote delayed turn" }
+    });
+    const returnedEarly = await Promise.race([
+      request.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 30))
+    ]);
+    assert.equal(returnedEarly, false);
+    finish();
+    const response = await request;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().submissionId, "remote-submission");
+  } finally {
+    await app.close();
+  }
+
+  const failedHub = new ThreadHub({}, {
+    remoteBackend: {
+      execute: async () => ({ submissionId: "failed-submission", delivery: "turn", accepted: true }),
+      waitForCompletion: async () => { throw new Error("remote completion failed"); }
+    }
+  });
+  failedHub.registerSession({ sessionId: "failed-session", machineId: "machine", workingDirectory: "/tmp/backend-review", transportRole: "backend" });
+  failedHub.attachSessionThread("failed-session", "failed-thread", "/tmp/backend-review");
+  const failedApp = Fastify();
+  await failedApp.register(websocket);
+  registerThreadRoutes(failedApp, {
+    threads: failedHub,
+    retainThreadRecordSubscription: () => undefined,
+    releaseThreadRecordSubscription: () => undefined
+  } as unknown as Parameters<typeof registerThreadRoutes>[1]);
+  try {
+    const response = await failedApp.inject({
+      method: "POST",
+      url: "/api/threads/failed-thread/turn?wait=true",
+      payload: { input: "remote failure" }
+    });
+    assert.equal(response.statusCode, 409);
+    assert.match(response.json().error, /remote completion failed/);
+  } finally {
+    await failedApp.close();
   }
 });
 

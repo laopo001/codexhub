@@ -358,6 +358,8 @@ export type ThreadTurnPayload = {
   submissionId?: string;
   queued?: boolean;
   delivery?: "turn" | "steer" | "goal" | "queued";
+  /** wait=true 响应对应的 canonical thread stream barrier。 */
+  lastSeq?: number;
   thread?: ThreadSummary | ThreadDetail;
   command?: string;
   error?: string;

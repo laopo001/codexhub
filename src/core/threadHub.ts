@@ -28,7 +28,7 @@ import type { RemoteBackendCommand, RemoteBackendExecutor } from "./remoteBacken
 import { planProgressFromPlan, planProgressSummary } from "../shared/planProgress.js";
 import { compareCodexRecords, turnIdFromAppRecordId } from "../shared/recordIdentity.js";
 import { asRecord, type CodexRecord } from "../shared/recordTypes.js";
-import { isUserMessageRecord } from "../shared/taskNotifications.js";
+import { isUserMessageRecord, turnIdFromRecord } from "../shared/taskNotifications.js";
 import { isAgentActivityRecord, latestAgentMessageFromRecords, threadActivityTitleFromRecords } from "../shared/threadActivity.js";
 import {
   asActivePermissionProfile,
@@ -114,6 +114,8 @@ export type ThreadTurnDispatch = {
   delivery: ThreadTurnDelivery;
   accepted: boolean;
   completion: Promise<void>;
+  /** steer 的执行结束独立于其命令 ACK，且由执行所在后端确定目标 Turn。 */
+  waitForExecutionCompletion?: () => Promise<void>;
   deliveryAcknowledgement?: Promise<void>;
 };
 
@@ -682,7 +684,7 @@ export class ThreadHub {
         const dispatch = this.runTurnWithDelivery(threadId, command.input, command.source ?? "web", command.options, command.submissionId);
         return {
           result: { submissionId: dispatch.submissionId, delivery: dispatch.delivery },
-          completion: dispatch.completion
+          completion: dispatch.waitForExecutionCompletion?.() ?? dispatch.completion
         };
       }
       case "steer": {
@@ -692,7 +694,7 @@ export class ThreadHub {
         const dispatch = this.runTurnWithDelivery(threadId, command.input, command.source ?? "web", command.options, command.submissionId);
         return {
           result: { submissionId: dispatch.submissionId, delivery: dispatch.delivery },
-          completion: dispatch.completion
+          completion: dispatch.waitForExecutionCompletion?.() ?? dispatch.completion
         };
       }
       case "set_goal":
@@ -802,6 +804,68 @@ export class ThreadHub {
       records: page.records,
       history: page.history
     };
+  }
+
+  /**
+   * 等待一个已经由 app-server 确认的 Turn 到达 canonical terminal record。
+   *
+   * steer 的 command completion 只代表 turn/steer ACK；HTTP wait=true 需要
+   * 继续等待原 active Turn 的收尾，不能由调用方猜下一条 Turn。
+   */
+  async waitForTurnCompletion(threadId: string, turnId: string): Promise<void> {
+    const thread = this.requireThread(threadId);
+    let unsubscribe: (() => void) | null = null;
+    let settled = false;
+    let resolveWait!: () => void;
+    let rejectWait!: (error: Error) => void;
+    const wait = new Promise<void>((resolve, reject) => {
+      resolveWait = resolve;
+      rejectWait = reject;
+    });
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      if (error) rejectWait(error);
+      else resolveWait();
+    };
+
+    const check = () => {
+      const terminal = turnTerminalRecord(thread, turnId);
+      if (terminal) {
+        const payload = asRecord(terminal.payload);
+        const type = typeof payload?.type === "string" ? payload.type : "";
+        const status = typeof payload?.status === "string" ? payload.status : "";
+        if (type === "turn_aborted" || type === "turn_transport_failed" || status === "failed" || status === "interrupted") {
+          const message = typeof payload?.reason === "string" && payload.reason
+            ? payload.reason
+            : typeof payload?.message === "string" && payload.message
+              ? payload.message
+              : `Turn failed: ${turnId}`;
+          finish(new Error(message));
+          return;
+        }
+        finish();
+        return;
+      }
+
+      // An inactive steer can be rejected after the original turn has already
+      // ended, then retried as a new/queued turn. Its own dispatch completion
+      // covers that fallback; do not wait forever for a missing old terminal.
+      if (!thread.running && thread.appServerTurnId !== turnId) finish();
+    };
+
+    check();
+    if (settled) return wait;
+
+    try {
+      unsubscribe = this.subscribe(threadId, -1, () => check());
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (settled) unsubscribe?.();
+    await wait;
   }
 
   async loadThreadHistoryPage(
@@ -1751,12 +1815,20 @@ export class ThreadHub {
       return turnDispatch(submissionId, "goal", () => this.setThreadGoal(thread, goalUpdateFromInput(input, options)));
     }
     if (thread.running && _source === "web" && thread.appServerTurnId) {
-      return turnDispatch(
+      const targetTurnId = thread.appServerTurnId;
+      const dispatch = turnDispatch(
         submissionId,
         "steer",
-        () => this.steerTurn(thread, input, thread.appServerTurnId!, options, submissionId, submissionCreatedAt),
+        () => this.steerTurn(thread, input, targetTurnId, options, submissionId, submissionCreatedAt),
         (error) => this.appendSubmissionFailedRecord(thread, input, error)
       );
+      return {
+        ...dispatch,
+        waitForExecutionCompletion: async () => {
+          await dispatch.completion;
+          await this.waitForTurnCompletion(thread.threadId, targetTurnId);
+        }
+      };
     }
     if (thread.running) return turnDispatch(
       submissionId,
@@ -4143,6 +4215,14 @@ const appServerTurnIsTerminal = (thread: ThreadState, turnId: string) =>
     record.id === `app:${thread.threadId}:${turnId}:event:task_complete`
     || record.id === `app:${thread.threadId}:${turnId}:event:turn_aborted`
   );
+
+const turnTerminalRecord = (thread: ThreadState, turnId: string) => thread.records.find((record) => {
+  if (turnIdFromRecord(record) !== turnId) return false;
+  const type = asRecord(record.payload)?.type;
+  return type === "task_complete"
+    || type === "turn_aborted"
+    || type === "turn_transport_failed";
+});
 
 const isAppServerTurnErrorRecord = (record: CodexRecord) =>
   record.type === "error" && asRecord(record.payload)?.type === "app_server_error";

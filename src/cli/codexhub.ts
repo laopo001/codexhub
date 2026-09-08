@@ -12,7 +12,14 @@ import {
   type CodexAppServerLaunchOptions
 } from "./codexAppServerProcess.js";
 import { runCodexhubMachine } from "./codexhubMachine.js";
+import { runConversation, type ConversationRunOptions, ConversationInterruptedError } from "./conversation.js";
+import {
+  ConversationStreamRenderer,
+  type ConversationStreamOutput
+} from "./conversationStreamRenderer.js";
+import { defaultLocalServerUrl, ensureLocalServer } from "./localServerBootstrap.js";
 import { registerParent, resolveRegisterParentTarget } from "./registerParent.js";
+import { threadRunOptionsSchema } from "../shared/apiContract.js";
 
 type ServerCommandOptions = {
   host?: string;
@@ -28,6 +35,7 @@ type ServerCommandOptions = {
 };
 
 type MachineCommandOptions = {
+  connect?: string;
   server?: string;
   authToken?: string;
   machineId?: string;
@@ -64,6 +72,20 @@ type TaskCreateCommandOptions = {
   disabled?: boolean;
 };
 
+type ConversationCommandOptions = {
+  name?: string;
+  machine?: string;
+  cwd?: string;
+  model?: string;
+  effort?: string;
+  stream?: boolean;
+  output?: string;
+  wait?: boolean;
+  noWait?: boolean;
+  json?: boolean;
+  timeout?: string;
+};
+
 type LocalTask = {
   taskId: string;
   name: string;
@@ -87,7 +109,8 @@ await readAndApplyServerConfigEnv(path.join(codexHubDataDirectory(), "config.yam
 const program = new Command()
   .name("codexhub")
   .description("Start and manage CodexHub")
-  .option("--server <url>", "codexhub server URL", defaultServerUrl());
+  .option("--connect <url>", "CodexHub backend URL")
+  .option("--server <url>", "compatibility alias for --connect");
 
 program
   .command("server")
@@ -131,7 +154,8 @@ program
 program
   .command("machine")
   .description("Register this machine so it can start runtime threads for project paths")
-  .option("--server <url>", "codexhub server URL")
+  .option("--connect <url>", "CodexHub backend URL for this machine command")
+  .option("--server <url>", "compatibility alias for the machine command's --connect")
   .option("--auth-token <token>", "codexhub API auth token (defaults to CODEX_HUB_AUTH_TOKEN)")
   .option("--machine-id <id>", "stable machine id")
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
@@ -142,12 +166,79 @@ program
   .action(async (options: MachineCommandOptions = {}) => {
     const appServerLaunch = appServerLaunchOptions(options);
     await runCodexhubMachine({
-      apiBase: options.server ?? apiBase(),
+      apiBase: resolveConnectionUrl(
+        program.opts<{ connect?: string; server?: string }>().connect,
+        program.opts<{ connect?: string; server?: string }>().server,
+        options.connect,
+        options.server
+      ),
       authToken: options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN,
       machineId: options.machineId,
       type: parseMachineType(options.type),
       name: options.name,
       appServerLaunch
+    });
+  });
+
+program
+  .command("start")
+  .argument("<input>", "first message to send")
+  .requiredOption("--name <name>", "thread name")
+  .option("--machine <machineId>", "target machine id")
+  .option("--cwd <path>", "working directory on the target machine")
+  .option("--model <model>", "model override for this turn")
+  .option("--effort <effort>", "reasoning effort override for this turn")
+  .option("--stream", "stream canonical records as they arrive")
+  .option("--output <mode>", "stream output mode: normal or raw")
+  .option("--no-wait", "return after the backend accepts the submission")
+  .option("--timeout <seconds>", "wait timeout in seconds", String(600))
+  .option("--json", "print a JSON result")
+  .description("Create a thread, name it, and send its first message")
+  .action(async (input: string, options: ConversationCommandOptions) => {
+    await runConversationCommand({
+      operation: "start",
+      input,
+      name: options.name,
+      machine: options.machine,
+      cwd: options.cwd,
+      model: options.model,
+      effort: options.effort,
+      stream: options.stream,
+      output: options.output,
+      noWait: options.wait === false,
+      json: options.json,
+      timeout: options.timeout
+    });
+  });
+
+program
+  .command("send")
+  .argument("<threadId>", "official Codex thread id")
+  .argument("<input>", "message to send")
+  .option("--machine <machineId>", "target machine id when the thread is not known by this backend")
+  .option("--cwd <path>", "working directory on the target machine")
+  .option("--model <model>", "model override for this turn")
+  .option("--effort <effort>", "reasoning effort override for this turn")
+  .option("--stream", "stream canonical records as they arrive")
+  .option("--output <mode>", "stream output mode: normal or raw")
+  .option("--no-wait", "return after the backend accepts the submission")
+  .option("--timeout <seconds>", "wait timeout in seconds", String(600))
+  .option("--json", "print a JSON result")
+  .description("Resume a thread and send a message")
+  .action(async (threadId: string, input: string, options: ConversationCommandOptions) => {
+    await runConversationCommand({
+      operation: "send",
+      input,
+      threadId,
+      machine: options.machine,
+      cwd: options.cwd,
+      model: options.model,
+      effort: options.effort,
+      stream: options.stream,
+      output: options.output,
+      noWait: options.wait === false,
+      json: options.json,
+      timeout: options.timeout
     });
   });
 
@@ -364,8 +455,119 @@ taskCommand
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode = error instanceof ConversationInterruptedError ? error.exitCode : 1;
 });
+
+async function runConversationCommand(
+  options: ConversationCommandOptions & Pick<ConversationRunOptions, "operation" | "input"> & { threadId?: string }
+) {
+  const output = validateConversationCommand(options);
+  const timeoutSeconds = parseTimeoutSecondsOption(options.timeout);
+  const json = options.json === true;
+  const input = await readConversationInput(options.input);
+  if (!input.trim()) throw new Error("Conversation input must not be empty.");
+  if (options.operation === "start" && !options.name?.trim()) {
+    throw new Error("start requires a non-empty --name.");
+  }
+  const conversationDeadline = Date.now() + timeoutSeconds * 1000;
+  const backend = await resolveConversationBackend(options.cwd, conversationDeadline);
+  console.error(`codexhub backend: ${new URL(backend.baseUrl).origin} (${backend.status})`);
+  const remainingTimeoutMs = conversationDeadline - Date.now();
+  if (remainingTimeoutMs <= 0) throw new Error("CLI conversation timeout expired during local server startup; no turn was submitted.");
+  const remainingTimeoutSeconds = remainingTimeoutMs / 1000;
+  const renderer = options.stream
+    ? new ConversationStreamRenderer(output)
+    : undefined;
+  const result = await runConversation({
+    operation: options.operation,
+    input,
+    name: options.name,
+    threadId: options.threadId,
+    machineId: options.machine,
+    cwd: options.cwd,
+    model: options.model,
+    effort: options.effort,
+    noWait: options.noWait,
+    json: options.json,
+    baseUrl: backend.baseUrl,
+    authToken: process.env.CODEX_HUB_AUTH_TOKEN,
+    timeoutSeconds: remainingTimeoutSeconds,
+    onThreadReady: renderer
+      ? (target) => renderer.threadStarted(target)
+      : json ? undefined : (target) => console.log(`Thread ID: ${target.threadId}`),
+    onStreamEvent: renderer ? (event) => renderer.event(event) : undefined,
+    onError: renderer
+      ? (error, target) => renderer.error({ threadId: target?.threadId, message: error.message })
+      : undefined
+  });
+  if (renderer) {
+    if (result.waited) {
+      // The HTTP response and this lastSeq wait are the completion boundary;
+      // stream records themselves were emitted by the WS callback above.
+      if (result.lastSeq === undefined) throw new Error("CodexHub completed a stream without a lastSeq barrier.");
+      renderer.completed({
+        threadId: result.threadId,
+        lastSeq: result.lastSeq,
+        submissionId: result.submissionId,
+        delivery: result.delivery
+      });
+    }
+    return;
+  }
+  if (json) {
+    const { lastSeq, ...publicResult } = result;
+    void lastSeq;
+    console.log(JSON.stringify(publicResult));
+    return;
+  }
+  if (options.noWait) {
+    if (result.submissionId) console.log(`Submission ID: ${result.submissionId}`);
+    if (result.delivery) console.log(`Delivery: ${result.delivery}`);
+    return;
+  }
+  for (const text of result.assistant) console.log(text);
+}
+
+async function resolveConversationBackend(cwd: string | undefined, deadline: number) {
+  const rootOptions = program.opts<{ connect?: string; server?: string }>();
+  const explicitlySelected = Boolean(rootOptions.connect?.trim() || rootOptions.server?.trim());
+  const environmentSelected = Boolean(process.env.CODEX_HUB_SERVER_URL?.trim());
+  if (explicitlySelected || environmentSelected) {
+    return { baseUrl: resolveConnectionUrl(rootOptions.connect, rootOptions.server), status: "connected" as const };
+  }
+  return await ensureLocalServer({
+    baseUrl: defaultLocalServerUrl(),
+    dataDir: codexHubDataDirectory(),
+    authToken: process.env.CODEX_HUB_AUTH_TOKEN,
+    cwd,
+    deadline
+  });
+}
+
+function validateConversationCommand(options: ConversationCommandOptions): ConversationStreamOutput {
+  const stream = options.stream === true;
+  if (stream && options.json) throw new Error("--stream cannot be combined with --json.");
+  if (stream && options.noWait) throw new Error("--stream cannot be combined with --no-wait.");
+  if (!stream && options.output !== undefined) throw new Error("--output is only valid with --stream.");
+  if (options.output !== undefined && options.output !== "normal" && options.output !== "raw") {
+    throw new Error("--output must be normal or raw.");
+  }
+  const parsed = threadRunOptionsSchema.safeParse({
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.effort === undefined ? {} : { modelReasoningEffort: options.effort })
+  });
+  if (!parsed.success) throw new Error(`Invalid conversation turn options: ${parsed.error.issues[0]?.message ?? "invalid options"}`);
+  return options.output === "raw" ? "raw" : "normal";
+}
+
+async function readConversationInput(input: string) {
+  if (input !== "-") return input;
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 async function apiJson<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(apiUrl(path), withAuth(init));
@@ -445,8 +647,42 @@ function apiUrl(path: string) {
 }
 
 function apiBase() {
-  const options = program.opts<{ server: string }>();
-  return options.server;
+  const options = program.opts<{ connect?: string; server?: string }>();
+  return resolveConnectionUrl(options.connect, options.server);
+}
+
+function resolveConnectionUrl(...values: Array<string | undefined>) {
+  const explicit = values.filter((value): value is string => Boolean(value?.trim())).map((value) => value.trim());
+  const unique = new Map(explicit.map((value) => [connectionKey(value), value]));
+  if (unique.size > 1) {
+    throw new Error("--connect and --server specify different CodexHub backends.");
+  }
+  const selected = unique.values().next().value as string | undefined;
+  const value = selected ?? defaultServerUrl();
+  const parsed = new URL(value);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("CodexHub backend URL must use http:// or https://.");
+  }
+  return parsed.toString();
+}
+
+function connectionKey(value: string) {
+  const parsed = new URL(value);
+  parsed.hash = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+  if ((parsed.protocol === "http:" && parsed.port === "80") || (parsed.protocol === "https:" && parsed.port === "443")) {
+    parsed.port = "";
+  }
+  return parsed.toString();
+}
+
+function parseTimeoutSecondsOption(value: string | undefined) {
+  if (value === undefined) return 600;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 86_400) {
+    throw new Error("--timeout must be greater than 0 and no more than 86400 seconds.");
+  }
+  return parsed;
 }
 
 function formatLocalTime(value: string) {
@@ -510,10 +746,11 @@ function serverUrl(host: string, port: number) {
 }
 
 function defaultServerUrl() {
-  if (process.env.CODEX_HUB_SERVER_URL) return process.env.CODEX_HUB_SERVER_URL;
+  const configuredUrl = process.env.CODEX_HUB_SERVER_URL?.trim();
+  if (configuredUrl) return configuredUrl;
   const host = process.env.CODEX_HUB_HOST ?? "127.0.0.1";
   const port = process.env.CODEX_HUB_PORT ?? "8788";
-  return serverUrl(host, Number(port));
+  return serverUrl(host, parsePortOption(port) ?? 8788);
 }
 
 function waitForShutdown() {

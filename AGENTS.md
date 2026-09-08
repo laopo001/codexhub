@@ -27,7 +27,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 2. 生产/本地 server 入口是 `codexhub server`，默认监听 `0.0.0.0:8788`；本机访问 URL 仍显示为 `http://127.0.0.1:8788`，`CODEX_HUB_HOST`、`CODEX_HUB_PORT` 或 CLI 参数可以覆盖。
 3. 开发时默认用 `pnpm dev` 同时启动 API 和 Web；单独启动时 API 用 `pnpm run dev:api`，Web 用 `pnpm run dev:web`，Vite 默认 `15173` 并代理 `/api` 到 `18788`。
 4. `codexhub machine --type registered` 注册一台可为 project path 启动 thread 的 machine；内嵌 local machine 也走同一套 machine command 协议。
-5. `codexhub register --to <parent>` 调用已有本机后端的 `/api/registered/parent` 后退出；全局 `--server` 指定本机后端。`codexhub server --register-to <parent>` 是启动并注册的快捷入口，Web Registered 面板复用同一注册实现。后端注册仅接入子机 local machine 的执行能力，复用唯一 local runtime；不得为其另起 app server 或让父机建立 app-server 协议客户端。local machine 禁用时明确拒绝注册。
+5. `codexhub register --to <parent>` 调用已有本机后端的 `/api/registered/parent` 后退出；全局 `--connect` 指定本机后端。`codexhub server --register-to <parent>` 是启动并注册的快捷入口，Web Registered 面板复用同一注册实现。后端注册仅接入子机 local machine 的执行能力，复用唯一 local runtime；不得为其另起 app server 或让父机建立 app-server 协议客户端。local machine 禁用时明确拒绝注册。
 6. `codexhub ssh ...` 是 server-side SSH 管理入口；SSH remote client 由本机 server bootstrap 下发，不要求远端预装 codexhub。
 7. VSCode 和 Electron 都通过 `src/server/embedded.ts` 复用同一套 server/Web。每个执行 authority 只运行一个 detached authority service，Windows、macOS 和普通 Linux 默认固定监听 `127.0.0.1:28788`，WSL 默认使用 `127.0.0.1:28789`，避免 mirrored networking 下与 Windows 的 `28788` 冲突；Windows、每个 WSL distro、每个 Remote SSH host/user 和容器仍是彼此独立的 authority。VSCode 和 Electron 都先 probe 这个 authority，只有第一个客户端启动 service，后续客户端 attach；固定端口被非匹配服务占用时必须明确失败，不能读取 `CODEX_HUB_PORT` 或静默顺延。`CODEX_HUB_AUTHORITY_PORT` 只用于显式的隔离开发/测试端口；若明确需要局域网访问，只允许通过 `CODEX_HUB_AUTHORITY_HOST=0.0.0.0` 或 `::` 显式覆盖默认 loopback。authority 默认只监听 loopback，默认不启用 access token；只有 extension host 环境或 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式非空时才启用认证。authority 使用共享数据目录、`config.yaml`、唯一 local runtime 和 parent machine transport；VSCode/Electron 各自通过 lease 注册 surface，窗口 surface 和自动 workspace projects 只作为 transient 内存投影，不写入持久配置。
 8. machine/headless 启动官方 `codex app-server` 时必须走 `resolveCodexCommand()`：优先 `CODEX_HUB_CODEX_CLI`，再查 `PATH` 和常见 npm/pnpm 全局 bin；Windows `.cmd` / `.bat` 需要经 `cmd.exe /d /s /c call` 启动。`CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS` 控制 `/readyz` 等待时间，错误应带最近 app-server stderr tail。不要读取 Codex 私有 `models_cache.json`，也不要注入 `model_catalog_json`；machine 只把在线 app-server 的标准 `model/list` 归一化结果缓存到 server data directory 下的 `runtime-catalog-cache/`，复用 TTL、并发去重、过期后台刷新和原子持久化。模型缓存按 machine、CLI 版本、app-server 报告的 `codexHome` 和 hidden 模式隔离，每个作用域使用独立文件，避免共享 data directory 的多个进程互相覆盖；缓存响应必须向 Web 标明来源。`permissionProfile/list` 和 Command Palette plugin/skill 候选不做持久缓存，由 Web 在 Composer 挂载后后台加载，并只在当前页面内按 machine/cwd 复用。
@@ -73,7 +73,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 9. Tasks：`GET /api/tasks`、`POST /api/tasks`、`PATCH /api/tasks/:taskId`、`DELETE /api/tasks/:taskId`、`POST /api/tasks/:taskId/run`。
 10. SSH：`GET /api/ssh/config-hosts`、`GET /api/ssh/hosts`、`POST /api/ssh/hosts`、`DELETE /api/ssh/hosts/:alias`、`GET /api/ssh/connections`、`POST /api/ssh/connect`、`DELETE /api/ssh/connections/:connectionId`、`GET /api/ssh/remote-client/:hash`。
 11. Plugins：`GET /api/plugins`、`GET /api/plugins/:pluginId/assets/*`。
-12. Web/TG/task 和外部 API 发送对话统一使用 `/api/threads/:threadId/turn`，不提供 session 级 turn 兼容入口。
+12. Web/TG/task 和外部 API 发送对话统一使用 `/api/threads/:threadId/turn`，不提供 session 级 turn 兼容入口。 可选 `?wait=true` 由后端等待本次提交执行结束，并返回 `lastSeq` 作为客户端收齐实时事件的边界；未指定时保留投递确认语义。CLI 不根据历史 `done` 或最新 turn 猜测完成。
 13. project 不拥有 runtime lifecycle。`POST /api/projects/open` 是显式 project path bootstrap/persistence 入口，通常返回 `machineId` 和创建/恢复的 `threadId`；匹配当前 embedded surface 且 `persist:false` 的 workspace provider seed 只验证目录并登记 transient project，不能启动 runtime/thread。machine transport 建立后会立即启动并通过 app-server `initialize` 注册唯一 runtime，Add Thread 只负责按 explicit cwd 创建或恢复 thread；`POST /api/machines/:machineId/runtime/ensure` 保留为幂等 readiness fallback。不要新增 per-project runtime stop/restart API。runtime 不由 project delete 或 idle watcher 结束，只随 machine/server 生命周期断开或由内部 shutdown 清理。
 
 ## Server Config
@@ -100,9 +100,10 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 ## CLI 模型
 
-1. 顶层 CLI 只保留 `server`、`machine`、`ssh`、`task`、`install-vscode`；安装命令只负责把 npm 包内共享的 `dist-vsix/codexhub.vsix` 安装到 VS Code，不扩展 project/runtime 语义。未知命令直接报错，不保留旧命令或根级 prompt 兼容入口。
-2. thread history browsing、thread resume 和 new thread 选择放在 Web/API：`/api/machines/:machineId/thread-candidates` 和 `/api/machines/:machineId/threads`。模型目录来自该 machine 当前在线 runtime 的 app-server `model/list`，通过 `/api/machines/:machineId/models` 暴露给 Web，不在 `config.yaml` 持久化。
+1. 顶层 CLI 提供 `server`、`machine`、`register`、`start`、`send`、`ssh`、`task`、`install-vscode`。`start <input> --name <name>` 创建 thread 并发送首条消息，`send <threadId> <input>` 继续对话；全局 `--connect` 选择已有 CodexHub HTTP 后端；`--server` 是兼容别名，显式指定不同地址时拒绝执行。未指定后端地址的对话命令负责确保默认本地 server 已启动，复用同一 server 的 machine/runtime；显式地址不可达时不启动替代实例。自动 server 必须 detached、并发去重并验证端口上的服务身份，不能因 CLI 退出停止。对话命令不直接启动 app-server，也不维护本地会话数据库。安装命令只负责安装 npm 包内共享的 VSIX；未知命令直接报错，不保留根级 prompt 兼容入口。
+2. CLI 和 Web 复用 `/api/machines/:machineId/threads` 创建或恢复 thread，通过现有 thread name/turn API 命名和发送，并通过 `/api/events/ws` 读取权威回复。CLI 必须显式保留目标 threadId；运行中的 steer、排队和 Goal 投递由后端决定。默认等待回复，`--no-wait` 仅等待投递确认；退出客户端不停止后端执行。历史浏览仍使用 Web/API。模型目录来自该 machine 当前在线 runtime 的 app-server `model/list`，通过 `/api/machines/:machineId/models` 暴露，不在 `config.yaml` 持久化。
 3. `--sandbox`、`--approval-policy` 只有用户显式传参时才作为 app-server override 转发；不要偷偷发明默认权限策略。
+4. 对话 CLI 的 `--model` / `--effort` 通过共享 turn options 传递；`--stream` 从同一 `/api/events/ws` 实时输出 canonical records，normal 复用 record view，raw 输出版本化 CodexHub JSONL，不伪造 `codex exec` 事件。`delegate-codex` 始终是这一入口的客户端，不保留 `codex exec` 路径；不创建另一套任务/会话数据库，也不隐式改变 Web surface 的 open tabs。会话通过现有 thread picker 查看。
 4. CLI 默认通过 `loadDotEnv()` 读取当前 cwd 的 `.env`，并且只填补未设置的环境变量。跨目录运行 `cxh` 时要先核对 cwd 和环境来源。
 5. 发布后的 bin 必须是 `#!/usr/bin/env node` + `dist-node` 编译产物，不依赖全局 `tsx`。
 

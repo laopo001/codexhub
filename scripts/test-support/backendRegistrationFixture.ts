@@ -33,7 +33,7 @@ let threadNumber = 0;
 let turnNumber = 0;
 const send = (socket, value) => { if (socket.readyState === 1) socket.send(JSON.stringify(value)); };
 const broadcast = (value) => { for (const socket of sockets) send(socket, value); };
-const summary = (thread, turns = false) => ({ id: thread.id, cwd: thread.cwd, name: thread.name, title: thread.title, createdAt: thread.createdAt, updatedAt: thread.updatedAt, ...(turns ? { turns: thread.turns } : {}) });
+const summary = (thread, turns = false) => ({ id: thread.id, cwd: thread.cwd, name: thread.name, title: thread.title, createdAt: Math.floor(new Date(thread.createdAt).getTime() / 1000), updatedAt: Math.floor(new Date(thread.updatedAt).getTime() / 1000), ...(thread.model ? { model: thread.model, reasoningEffort: thread.effort } : {}), ...(turns ? { turns: thread.turns } : {}) });
 
 const handle = (socket, message) => {
   if (message.id === undefined) return;
@@ -44,6 +44,12 @@ const handle = (socket, message) => {
   let afterReply;
   if (method === "initialize") result = { userAgent: "codex_cli_rs/" + version, codexHome: "/tmp/mock-codex-home" };
   else if (method === "account/rateLimits/read") result = { rateLimits: null };
+  else if (method === "model/list") result = { data: [{ id: "gpt-5.6-luna", model: "gpt-5.6-luna", displayName: "gpt-5.6-luna", description: "Fixture model", defaultReasoningEffort: "xhigh", supportedReasoningEfforts: [{ reasoningEffort: "xhigh", description: "Fixture effort" }], isDefault: true }], nextCursor: null };
+  else if (method === "thread/list") result = { data: [...threads.values()].filter(thread => !params.cwd || thread.cwd === params.cwd).map(thread => summary(thread)), nextCursor: null };
+  else if (method === "thread/name/set") {
+    const thread = threads.get(params.threadId);
+    if (thread) { thread.name = params.name; thread.title = params.name; }
+  }
   else if (method === "thread/start") {
     const now = new Date().toISOString();
     const id = "mock-thread-" + process.pid + "-" + (++threadNumber);
@@ -60,10 +66,24 @@ const handle = (socket, message) => {
   else if (method === "thread/turns/list") {
     const thread = threads.get(params.threadId);
     result = { data: thread ? [...thread.turns].reverse() : [], nextCursor: null };
+  } else if (method === "turn/steer") {
+    const thread = threads.get(params.threadId);
+    const turn = thread && thread.turns.find(turn => turn.id === params.expectedTurnId && turn.status === "inProgress");
+    if (!turn) error = "no active turn to steer";
+    else {
+      const userItem = { id: "guidance-" + turn.id + "-" + turn.items.length, type: "userMessage", content: params.input };
+      turn.items.push(userItem);
+      result = { turnId: turn.id };
+      afterReply = () => broadcast({ method: "item/completed", params: { threadId: thread.id, turnId: turn.id, item: userItem } });
+    }
   } else if (method === "turn/start") {
     const thread = threads.get(params.threadId);
     if (!thread) error = "thread not found: " + String(params.threadId);
     else {
+      starts.turnRequests = [...(starts.turnRequests || []), { model: params.model, effort: params.effort, threadId: params.threadId }];
+      thread.model = params.model;
+      thread.effort = params.effort;
+      fs.writeFileSync(stateFile, JSON.stringify(starts));
       const startedAt = Date.now() / 1000;
       const turnId = "mock-turn-" + process.pid + "-" + (++turnNumber);
       const inputText = Array.isArray(params.input)
@@ -72,14 +92,30 @@ const handle = (socket, message) => {
       const userItem = { id: "mock-user-" + turnId, type: "userMessage", content: [{ type: "text", text: inputText }] };
       const item = { id: "mock-item-" + turnId, type: "agentMessage", text: "mock response" };
       const turn = { id: turnId, status: "completed", itemsView: "full", error: null, startedAt, completedAt: startedAt + 0.01, durationMs: 10, items: [userItem, item] };
+      const delay = Number(process.env.MOCK_CODEX_TURN_DELAY_MS || "0");
+      if (delay > 0) { turn.status = "inProgress"; turn.completedAt = null; turn.durationMs = null; turn.items = [userItem]; }
       thread.turns.push(turn);
       thread.updatedAt = new Date().toISOString();
       result = { turn: { id: turnId, status: "inProgress" } };
       afterReply = () => setTimeout(() => {
         broadcast({ method: "turn/started", params: { threadId: thread.id, turn: { id: turnId, status: "inProgress", startedAt } } });
         broadcast({ method: "item/completed", params: { threadId: thread.id, turnId, item: userItem } });
-        broadcast({ method: "item/completed", params: { threadId: thread.id, turnId, item } });
-        broadcast({ method: "turn/completed", params: { threadId: thread.id, turn } });
+        if (process.env.MOCK_CODEX_RICH_TURNS === "1") {
+          const commentary = { id: "commentary-" + turnId, type: "agentMessage", phase: "commentary", text: "正在检查委派任务的项目结构。" };
+          const command = { id: "command-" + turnId, type: "commandExecution", command: "printf 'delegate web verification'", cwd: thread.cwd, status: "completed", aggregatedOutput: "delegate web verification\n", exitCode: 0, durationMs: 5 };
+          turn.items.splice(1, 0, commentary, command);
+          broadcast({ method: "item/completed", params: { threadId: thread.id, turnId, item: commentary } });
+          broadcast({ method: "item/completed", params: { threadId: thread.id, turnId, item: command } });
+        }
+        const finish = () => {
+          turn.status = "completed";
+          turn.completedAt = Date.now() / 1000;
+          turn.durationMs = Math.round((turn.completedAt - startedAt) * 1000);
+          if (!turn.items.includes(item)) turn.items.push(item);
+          broadcast({ method: "item/completed", params: { threadId: thread.id, turnId, item } });
+          broadcast({ method: "turn/completed", params: { threadId: thread.id, turn } });
+        };
+        if (delay > 0) setTimeout(finish, delay); else finish();
       }, 10);
     }
   }
@@ -108,7 +144,7 @@ process.on("SIGINT", shutdown);
 server.listen(port, "127.0.0.1");
 `;
 
-export type MockCodexStats = { startCount: number; pids: number[] };
+export type MockCodexStats = { startCount: number; pids: number[]; turnRequests?: Array<{ model?: string; effort?: string; threadId: string }> };
 export type ApiResult<T> = { status: number; body: T };
 
 export type BackendRegistrationFixture = {
@@ -128,7 +164,7 @@ export type BackendRegistrationFixture = {
 };
 
 export const createBackendRegistrationFixture = async (
-  options: { childLocalMachine?: boolean } = {}
+  options: { childLocalMachine?: boolean; childPort?: number; richTurns?: boolean; turnDelayMs?: number } = {}
 ): Promise<BackendRegistrationFixture> => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-backend-registration."));
   const mockPath = path.join(root, "mock-codex.cjs");
@@ -140,12 +176,14 @@ export const createBackendRegistrationFixture = async (
   await chmod(mockPath, 0o755);
   await writeFile(statsPath, JSON.stringify({ startCount: 0, pids: [] }));
 
-  const envKeys = ["CODEX_HUB_CODEX_CLI", "MOCK_CODEX_STATE_FILE", "MOCK_CODEX_WS_MODULE", "CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", "CODEX_HUB_PLUGIN_TELEGRAM", "CODEX_HUB_LOCAL_MACHINE_ID", "CODEX_HUB_LOCAL_MACHINE_NAME"] as const;
+  const envKeys = ["CODEX_HUB_CODEX_CLI", "MOCK_CODEX_STATE_FILE", "MOCK_CODEX_WS_MODULE", "MOCK_CODEX_RICH_TURNS", "MOCK_CODEX_TURN_DELAY_MS", "CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", "CODEX_HUB_PLUGIN_TELEGRAM", "CODEX_HUB_LOCAL_MACHINE_ID", "CODEX_HUB_LOCAL_MACHINE_NAME"] as const;
   const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, {
     CODEX_HUB_CODEX_CLI: mockPath,
     MOCK_CODEX_STATE_FILE: statsPath,
     MOCK_CODEX_WS_MODULE: mockWebSocketModule,
+    MOCK_CODEX_RICH_TURNS: options.richTurns ? "1" : "0",
+    MOCK_CODEX_TURN_DELAY_MS: String(options.turnDelayMs ?? 0),
     CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS: "5000",
     CODEX_HUB_PLUGIN_TELEGRAM: "0",
     CODEX_HUB_LOCAL_MACHINE_ID: childLocalMachineId,
@@ -153,7 +191,7 @@ export const createBackendRegistrationFixture = async (
   });
 
   const parentPort = await findFreePort("127.0.0.1");
-  const childPort = await findFreePort("127.0.0.1");
+  const childPort = options.childPort ?? await findFreePort("127.0.0.1");
   const parentOptions = { host: "127.0.0.1", port: parentPort, dataDir: path.join(root, "parent-data"), authToken: parentAuthToken, autoStartRuntime: true, features: { localMachine: false, ssh: false, tasks: false, integrations: false } } as const;
   const childOptions = { host: "127.0.0.1", port: childPort, dataDir: path.join(root, "child-data"), authToken: childAuthToken, autoStartRuntime: true, features: { localMachine: options.childLocalMachine ?? true, ssh: false, tasks: false, integrations: false } } as const;
   let parent: ServerHandle | undefined;

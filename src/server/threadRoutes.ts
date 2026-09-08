@@ -488,6 +488,9 @@ export const registerThreadRoutes = <
 
   app.post("/api/threads/:threadId/turn", async (request, reply) => {
     const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    const query = z.object({
+      wait: z.enum(["true", "false"]).optional()
+    }).strict().parse(request.query);
     const payload = z.object({
       submissionId: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9:_-]+$/).optional(),
       input: inputSchema,
@@ -496,9 +499,21 @@ export const registerThreadRoutes = <
     }).parse(request.body);
 
     let delivery: ThreadTurnPayload["delivery"];
+    let retainedRecords = false;
     try {
       const command = ctx.threads.runLocalCommand(params.threadId, payload.input, payload.source ?? "web");
-      if (command.handled) return { ok: true, command: command.command } satisfies ThreadTurnPayload;
+      if (command.handled) {
+        const lastSeq = query.wait === "true" ? ctx.threads.getThreadPage(params.threadId).lastSeq : undefined;
+        return {
+          ok: true,
+          command: command.command,
+          ...(lastSeq === undefined ? {} : { lastSeq })
+        } satisfies ThreadTurnPayload;
+      }
+      if (query.wait === "true") {
+        ctx.retainThreadRecordSubscription(params.threadId);
+        retainedRecords = true;
+      }
       const dispatch = ctx.threads.runTurnWithDelivery(
         params.threadId,
         payload.input,
@@ -510,21 +525,28 @@ export const registerThreadRoutes = <
       if (dispatch.deliveryAcknowledgement) {
         await dispatch.deliveryAcknowledgement;
         delivery = dispatch.delivery;
-      } else if (!dispatch.accepted || dispatch.delivery === "goal") {
-        await dispatch.completion;
+      }
+      if (query.wait === "true" || !dispatch.accepted || dispatch.delivery === "goal") {
+        await (query.wait === "true" && dispatch.waitForExecutionCompletion
+          ? dispatch.waitForExecutionCompletion()
+          : dispatch.completion);
       } else {
         void dispatch.completion.catch(() => undefined);
       }
+      const lastSeq = query.wait === "true" ? ctx.threads.getThreadPage(params.threadId).lastSeq : undefined;
       return {
         ok: true,
         submissionId: dispatch.submissionId,
         delivery: dispatch.delivery,
-        ...(dispatch.delivery === "queued" ? { queued: true } : {})
+        ...(dispatch.delivery === "queued" ? { queued: true } : {}),
+        ...(lastSeq === undefined ? {} : { lastSeq })
       } satisfies ThreadTurnPayload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(message.startsWith("Thread not found:") ? 404 : 409);
       return { error: message, ...(delivery ? { delivery } : {}) } satisfies ThreadTurnPayload;
+    } finally {
+      if (retainedRecords) ctx.releaseThreadRecordSubscription(params.threadId);
     }
   });
 
