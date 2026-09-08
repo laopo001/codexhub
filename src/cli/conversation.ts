@@ -26,6 +26,7 @@ type RealtimeThreadMessage = {
   record?: CodexRecord;
   delta?: { recordId: string; field: "aggregated_output"; append: string };
   snapshot?: { reset?: boolean };
+  lifecycle?: "end";
   message?: string;
   scope?: string;
   queue?: ThreadQueueItem[];
@@ -45,6 +46,8 @@ export type ConversationRunOptions = {
   noWait?: boolean;
   json?: boolean;
   timeoutSeconds?: number;
+  persistent?: boolean;
+  externalSignal?: AbortSignal;
   onThreadReady?: (target: ConversationThreadTarget) => void;
   onStreamEvent?: (event: ConversationStreamEvent) => void;
   onError?: (error: Error, target?: ConversationThreadTarget) => void;
@@ -94,22 +97,28 @@ export const runConversation = async (options: ConversationRunOptions): Promise<
     throw new Error("start requires a non-empty --name.");
   }
 
-  const wait = !options.noWait;
-  const timeoutMs = wait
-    ? parseTimeoutSeconds(options.timeoutSeconds ?? DEFAULT_WAIT_TIMEOUT_SECONDS) * 1000
-    : SHORT_REQUEST_TIMEOUT_MS;
+  const persistent = options.persistent === true;
+  const wait = !options.noWait && !persistent;
+  const timeoutMs = options.noWait
+    ? SHORT_REQUEST_TIMEOUT_MS
+    : options.timeoutSeconds === undefined && persistent
+      ? undefined
+      : parseTimeoutSeconds(options.timeoutSeconds ?? DEFAULT_WAIT_TIMEOUT_SECONDS) * 1000;
   const abortController = new AbortController();
   let interrupted = false;
   let timedOut = false;
-  const deadlineTimer = wait ? setTimeout(() => {
+  const deadlineTimer = timeoutMs === undefined ? undefined : setTimeout(() => {
     timedOut = true;
     abortController.abort();
-  }, timeoutMs) : undefined;
+  }, timeoutMs);
   const onInterrupt = () => {
     interrupted = true;
     abortController.abort();
   };
   process.once("SIGINT", onInterrupt);
+  const onExternalAbort = () => abortController.abort();
+  if (options.externalSignal?.aborted) onExternalAbort();
+  else options.externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
   let subscription: ThreadSubscription | undefined;
   let preparedTarget: ConversationThreadTarget | undefined;
@@ -128,7 +137,7 @@ export const runConversation = async (options: ConversationRunOptions): Promise<
     const machineId = target.machineId;
     const cwd = target.cwd;
 
-    if (!wait) {
+    if (!wait && !persistent) {
       const response = await postTurn(options.baseUrl, options.authToken, threadId, input, false, abortController.signal, SHORT_REQUEST_TIMEOUT_MS, turnOptionsFrom(options));
       return {
         threadId,
@@ -147,7 +156,7 @@ export const runConversation = async (options: ConversationRunOptions): Promise<
       options.baseUrl,
       options.authToken,
       threadId,
-      timeoutMs,
+      timeoutMs ?? SHORT_REQUEST_TIMEOUT_MS,
       abortController.signal,
       options.onStreamEvent
     );
@@ -160,15 +169,28 @@ export const runConversation = async (options: ConversationRunOptions): Promise<
       options.authToken,
       threadId,
       input,
-      true,
+      !persistent,
       abortController.signal,
-      timeoutMs,
+      persistent ? SHORT_REQUEST_TIMEOUT_MS : timeoutMs,
       turnOptionsFrom(options)
     );
-    const response = await Promise.race([
-      responsePromise,
-      subscription.failurePromise()
-    ]);
+    const response = await Promise.race([responsePromise, subscription.failurePromise()]);
+    if (persistent) {
+      const endSeq = await subscription.waitForEnd(abortController.signal);
+      await subscription.waitForSeq(endSeq, timeoutMs, abortController.signal);
+      return {
+        threadId,
+        machineId,
+        cwd,
+        waited: true,
+        submissionId: response.submissionId,
+        delivery: response.delivery,
+        queued: response.queued,
+        command: response.command,
+        lastSeq: endSeq,
+        assistant: subscription.assistantChanges(baseline)
+      };
+    }
     if (typeof response.lastSeq !== "number") {
       throw new Error("CodexHub wait response did not include a realtime stream barrier.");
     }
@@ -189,7 +211,7 @@ export const runConversation = async (options: ConversationRunOptions): Promise<
     const normalized = interrupted
       ? new ConversationInterruptedError()
       : timedOut
-        ? new Error(`CodexHub conversation timed out after ${timeoutMs / 1000}s; execution on the backend was not stopped.`)
+        ? new Error(`CodexHub conversation timed out after ${(timeoutMs ?? 0) / 1000}s; execution on the backend was not stopped.`)
         : error instanceof Error ? error : new Error(String(error));
     try {
       options.onError?.(normalized, preparedTarget);
@@ -200,6 +222,7 @@ export const runConversation = async (options: ConversationRunOptions): Promise<
   } finally {
     clearTimeout(deadlineTimer);
     process.removeListener("SIGINT", onInterrupt);
+    options.externalSignal?.removeEventListener("abort", onExternalAbort);
     abortController.abort();
     subscription?.close();
   }
@@ -452,7 +475,7 @@ class ThreadSubscription {
     target: number;
     resolve: () => void;
     reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
+    timer?: NodeJS.Timeout;
     signal: AbortSignal;
     onAbort: () => void;
   }>();
@@ -461,6 +484,8 @@ class ThreadSubscription {
   private readonly readyReject: (error: Error) => void;
   private readonly failure: Promise<never>;
   private readonly failureReject: (error: Error) => void;
+  private readonly end: Promise<number>;
+  private readonly endResolve: (seq: number) => void;
   private socket: WebSocket | undefined;
   private subscribed = false;
   private historical = false;
@@ -494,6 +519,9 @@ class ThreadSubscription {
     });
     this.failureReject = rejectFailure;
     void this.failure.catch(() => undefined);
+    let resolveEnd!: (seq: number) => void;
+    this.end = new Promise<number>((resolve) => { resolveEnd = resolve; });
+    this.endResolve = resolveEnd;
   }
 
   static async open(
@@ -583,6 +611,10 @@ class ThreadSubscription {
       this.maxLiveSeq = Math.max(this.maxLiveSeq, message.seq);
       this.resolveLiveSeqWaiters();
     }
+    if (!message.historical && message.lifecycle === "end") {
+      if (typeof message.seq === "number") this.endResolve(message.seq);
+      return;
+    }
     if (message.kind === "thread") {
       if (message.historical) {
         this.historical = true;
@@ -668,7 +700,7 @@ class ThreadSubscription {
     return output;
   }
 
-  async waitForSeq(target: number, timeoutMs: number, signal: AbortSignal) {
+  async waitForSeq(target: number, timeoutMs: number | undefined, signal: AbortSignal) {
     if (this.maxLiveSeq >= target) return;
     if (this.failureError) throw this.failureError;
     await new Promise<void>((resolve, reject) => {
@@ -676,7 +708,7 @@ class ThreadSubscription {
         target: number;
         resolve: () => void;
         reject: (error: Error) => void;
-        timer: NodeJS.Timeout;
+        timer?: NodeJS.Timeout;
         signal: AbortSignal;
         onAbort: () => void;
       };
@@ -691,15 +723,40 @@ class ThreadSubscription {
         reject,
         signal,
         onAbort,
-        timer: setTimeout(() => {
-          this.liveSeqWaiters.delete(waiter);
-          signal.removeEventListener("abort", onAbort);
-          reject(new RealtimeError(`CodexHub realtime stream did not reach seq ${target} within ${Math.ceil(timeoutMs / 1000)}s.`));
-        }, timeoutMs)
+        ...(timeoutMs === undefined ? {} : {
+          timer: setTimeout(() => {
+            this.liveSeqWaiters.delete(waiter);
+            signal.removeEventListener("abort", onAbort);
+            reject(new RealtimeError(`CodexHub realtime stream did not reach seq ${target} within ${Math.ceil(timeoutMs / 1000)}s.`));
+          }, timeoutMs)
+        })
       };
       signal.addEventListener("abort", onAbort, { once: true });
       this.liveSeqWaiters.add(waiter);
       this.resolveLiveSeqWaiters();
+    });
+  }
+
+  async waitForEnd(signal: AbortSignal) {
+    if (this.failureError) throw this.failureError;
+    return await new Promise<number>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      const finish = (error?: Error, seq?: number) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(seq as number);
+      };
+      const onAbort = () => finish(new RealtimeError("CodexHub realtime end wait was interrupted."));
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+      void this.end.then((seq) => finish(undefined, seq), (error) => finish(error instanceof Error ? error : new Error(String(error))));
+      void this.failurePromise().catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
     });
   }
 

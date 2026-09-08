@@ -603,6 +603,17 @@ export const registerThreadRoutes = <
     }
   });
 
+  app.post("/api/threads/:threadId/end", async (request, reply) => {
+    const params = z.object({ threadId: z.string().min(1) }).parse(request.params);
+    try {
+      return await ctx.threads.endThread(params.threadId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(message.startsWith("Thread not found:") ? 404 : 409);
+      return { ended: false, error: message };
+    }
+  });
+
   app.post("/api/threads/:threadId/background-terminals/:processId/terminate", async (request, reply) => {
     const params = z.object({
       threadId: z.string().min(1),

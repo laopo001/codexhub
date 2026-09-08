@@ -37,6 +37,7 @@ import type {
   ThreadCandidatesPayload,
   ThreadDeletePayload,
   ThreadDetail,
+  ThreadEndPayload,
   ThreadBackgroundTerminalTerminatePayload,
   ThreadApprovalDecisionInput,
   ThreadApprovalPayload,
@@ -256,6 +257,9 @@ export const apiRoutes = {
   ),
   stopThreadTurn: postNoBody<ThreadStopPayload, (threadId: string) => string>(
     (threadId) => `/api/threads/${encode(threadId)}/stop`
+  ),
+  endThread: postNoBody<ThreadEndPayload, (threadId: string) => string>(
+    (threadId) => `/api/threads/${encode(threadId)}/end`
   ),
   terminateBackgroundTerminal: postNoBody<
     ThreadBackgroundTerminalTerminatePayload,

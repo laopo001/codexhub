@@ -44,11 +44,15 @@ test("authority startup recovers a stale corrupt lock and rejects profile/auth/c
     await utimes(lockPath, stale / 1000, stale / 1000);
 
     const started = await Promise.all([
-      fixture.runCli(["start", "stale lock one", "--name", "Stale lock one", "--no-wait", "--json"]),
-      fixture.runCli(["start", "stale lock two", "--name", "Stale lock two", "--no-wait", "--json"])
+      fixture.startPersistent(["stale lock one", "--name", "Stale lock one"]),
+      fixture.startPersistent(["stale lock two", "--name", "Stale lock two"])
     ]);
-    for (const result of started) assert.equal(result.code, 0, result.stderr || result.stdout);
     assert.equal((await fixture.readStats()).startCount, 1);
+    for (const start of started) {
+      const ended = await fixture.runCli(["end", start.threadId, "--timeout", "5", "--json"]);
+      assert.equal(ended.code, 0, ended.stderr || ended.stdout);
+      await waitForFixture(async () => start.running.child.exitCode, (code) => code === 0, "stale-lock start natural exit");
+    }
 
     const alternateAssets = path.join(fixture.root, "alternate-assets");
     await mkdir(alternateAssets, { recursive: true });
@@ -62,14 +66,14 @@ test("authority startup recovers a stale corrupt lock and rejects profile/auth/c
     assert.match(launchMismatch.stderr, /app-server.*approvalsReviewer/i);
     await assert.rejects(access(lockPath));
 
-    const wrongAuth = await fixture.runCli(["send", "missing-thread", "wrong auth", "--no-wait"], {
+    const wrongAuth = await fixture.runCli(["send", "missing-thread", "wrong auth"], {
       env: { CODEX_HUB_AUTH_TOKEN: "wrong-authority-token" }
     });
     assert.notEqual(wrongAuth.code, 0);
     assert.match(wrongAuth.stderr, /auth|401|unauthorized/i);
 
     const wrongDataDir = path.join(fixture.root, "different-data");
-    const wrongProfile = await fixture.runCli(["send", "missing-thread", "wrong profile", "--no-wait"], {
+    const wrongProfile = await fixture.runCli(["send", "missing-thread", "wrong profile"], {
       env: { CODEX_HUB_DATA_DIR: wrongDataDir }
     });
     assert.notEqual(wrongProfile.code, 0);
@@ -78,7 +82,7 @@ test("authority startup recovers a stale corrupt lock and rejects profile/auth/c
 
     const unreachablePort = await findFreePort("127.0.0.1");
     const unreachable = await fixture.runCli(
-      ["--connect", `http://127.0.0.1:${unreachablePort}`, "start", "remote", "--name", "Remote", "--no-wait"],
+      ["--connect", `http://127.0.0.1:${unreachablePort}`, "start", "remote", "--name", "Remote"],
       { env: { CODEX_HUB_DATA_DIR: path.join(fixture.root, "connect-data") } }
     );
     assert.notEqual(unreachable.code, 0);
@@ -109,12 +113,14 @@ test("source and built CLI use the shared authority entry when the built artifac
   }
   const fixture = await createLocalServerAutostartFixture();
   try {
-    const result = await fixture.runCli(["start", "built local input", "--name", "Built local", "--no-wait", "--json"], { built: true });
-    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const started = await fixture.startPersistent(["built local input", "--name", "Built local"], { built: true });
     const health = await waitForAuthority(fixture.url, fixture.authToken);
     assert.ok(health.authority?.authorityId);
     assert.ok(health.serverInstanceId);
     assert.equal((await fixture.readStats()).startCount, 1);
+    const ended = await fixture.runCli(["end", started.threadId, "--timeout", "5", "--json"], { built: true });
+    assert.equal(ended.code, 0, ended.stderr || ended.stdout);
+    await waitForFixture(async () => started.running.child.exitCode, (code) => code === 0, "built start natural exit");
   } finally {
     await fixture.close();
   }
@@ -124,9 +130,8 @@ const assertCliFirstReuse = async () => {
   const fixture = await createLocalServerAutostartFixture();
   let host: Awaited<ReturnType<typeof fixture.startCli>> | undefined;
   try {
-    const first = await fixture.runCli(["start", "cli first", "--name", "CLI first", "--no-wait", "--json"]);
-    assert.equal(first.code, 0, first.stderr || first.stdout);
-    const result = JSON.parse(first.stdout) as { machineId?: string };
+    const firstStart = await fixture.startPersistent(["cli first", "--name", "CLI first"]);
+    const result = await fetchJson<{ runtime?: { machineId?: string } }>(fixture.url, fixture.authToken, `/api/threads/${encodeURIComponent(firstStart.threadId)}`);
     const firstHealth = await waitForAuthority(fixture.url, fixture.authToken);
     assert.ok(firstHealth.authority?.authorityId);
     assert.ok(firstHealth.serverInstanceId);
@@ -140,8 +145,11 @@ const assertCliFirstReuse = async () => {
     const onlineRuntimes = (runtimes.runtimes ?? []).filter((runtime) => runtime.online);
     assert.equal(onlineMachines.length, 1);
     assert.equal(onlineRuntimes.length, 1);
-    assert.equal(result.machineId, onlineMachines[0]?.machineId);
+    assert.equal(result.runtime?.machineId, onlineMachines[0]?.machineId);
     assert.equal(onlineMachines[0]?.machineId, onlineRuntimes[0]?.machineId);
+    const ended = await fixture.runCli(["end", firstStart.threadId, "--timeout", "5", "--json"]);
+    assert.equal(ended.code, 0, ended.stderr || ended.stdout);
+    await waitForFixture(async () => firstStart.running.child.exitCode, (code) => code === 0, "CLI-first start natural exit");
 
     host = await fixture.startCli(["server", "--host", "127.0.0.1", "--port", String(fixture.port)]);
     await waitForOutput(host, /codexhub server managing shared authority/);
@@ -184,13 +192,15 @@ const assertHostFirstReuse = async () => {
     const firstAuthorityPid = (await fixture.authorityPids())[0];
     assert.ok(firstAuthorityPid);
 
-    const cli = await fixture.runCli(["start", "host first", "--name", "Host first", "--no-wait", "--json"]);
-    assert.equal(cli.code, 0, cli.stderr || cli.stdout);
+    const cli = await fixture.startPersistent(["host first", "--name", "Host first"]);
     const secondHealth = await waitForAuthority(fixture.url, fixture.authToken);
     assert.equal(secondHealth.authority?.authorityId, firstHealth.authority?.authorityId);
     assert.equal(secondHealth.serverInstanceId, firstHealth.serverInstanceId);
     assert.equal((await fixture.authorityPids()).filter((pid) => pid === firstAuthorityPid).length, 1);
     assert.equal((await fixture.readStats()).startCount, 1);
+    const ended = await fixture.runCli(["end", cli.threadId, "--timeout", "5", "--json"]);
+    assert.equal(ended.code, 0, ended.stderr || ended.stdout);
+    await waitForFixture(async () => cli.running.child.exitCode, (code) => code === 0, "host-first start natural exit");
   } finally {
     await fixture.close();
   }

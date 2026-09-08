@@ -605,6 +605,7 @@ export class ThreadHub {
     }
     this.publish(thread, event.kind, event.record, {
       historical: event.historical,
+      lifecycle: event.lifecycle,
       records: event.records,
       suppressPolicies: true,
       snapshot: event.snapshot,
@@ -1477,6 +1478,16 @@ export class ThreadHub {
     });
     await promise;
     return { stopped: true };
+  }
+
+  endThread(threadId: string) {
+    const thread = this.requireThread(threadId);
+    if (thread.running) throw new Error(`Cannot end a running thread: ${threadId}`);
+    if (this.queuedTurnItems(threadId).length > 0) {
+      throw new Error(`Cannot end a thread with queued messages: ${threadId}`);
+    }
+    this.publish(thread, "thread", undefined, { lifecycle: "end" });
+    return { ended: true, lastSeq: thread.seq };
   }
 
   async terminateBackgroundTerminal(threadId: string, processId: string) {
@@ -3736,6 +3747,7 @@ export class ThreadHub {
     record?: CodexRecord,
     options: {
       historical?: boolean;
+      lifecycle?: "end";
       records?: CodexRecord[];
       delta?: ThreadStreamEvent["delta"];
       snapshot?: ThreadStreamEvent["snapshot"];
@@ -3748,6 +3760,7 @@ export class ThreadHub {
       seq: ++thread.seq,
       threadId: thread.threadId,
       kind,
+      ...(options.lifecycle ? { lifecycle: options.lifecycle } : {}),
       ...(options.historical ? { historical: true } : {}),
       ...(options.records !== undefined ? { records: options.records } : {}),
       ...(options.delta ? { delta: options.delta } : {}),

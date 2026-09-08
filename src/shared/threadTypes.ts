@@ -349,6 +349,8 @@ export type ThreadStreamEvent = {
   seq: number;
   threadId: string;
   kind: "thread" | "record" | "record_delta" | "done";
+  /** Transient lifecycle signals are emitted only on the live stream. */
+  lifecycle?: "end";
   historical?: boolean;
   thread: ThreadSummary;
   record?: CodexRecord;

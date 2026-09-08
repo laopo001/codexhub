@@ -15,13 +15,13 @@ const threadId = "stream-thread";
 const machineId = "stream-machine";
 const cwd = "/remote/workspace";
 
-test("stream text arrives live, preserves stdin/options, and ignores history", { timeout: 20_000 }, async () => {
+test("start text arrives live, preserves stdin/options, and ignores history", { timeout: 20_000 }, async () => {
   const fixture = await createFixture();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-stream-"));
   try {
     const child = spawn(process.execPath, [tsxCli, "src/cli/codexhub.ts", "--connect", fixture.url,
       "start", "-", "--name", "Stream text", "--model", "gpt-stream", "--effort", "ultra",
-      "--stream", "--cwd", cwd, "--machine", machineId, "--timeout", "10"], {
+      "--cwd", cwd, "--machine", machineId], {
       cwd: projectRoot,
       env: {
         ...process.env,
@@ -37,12 +37,19 @@ test("stream text arrives live, preserves stdin/options, and ignores history", {
 
     await waitFor(() => output.value.includes("[commentary]"), "first live text record");
     assert.equal(fixture.turnResponseSent, false, "a live WS record must precede the HTTP completion response");
+    fixture.end();
     const exitCode = await childExit(child);
     assert.equal(exitCode, 0, errors.value);
 
     assert.match(output.value, /Thread ID: stream-thread/);
     assert.match(output.value, /\[commentary\][\s\S]*live commentary/);
     assert.match(output.value, /\[final_answer\][\s\S]*live final/);
+    assert.match(output.value, /\[tool_call\]\nexec_command/);
+    assert.match(output.value, /\[tool_result\]/);
+    assert.match(output.value, /\[tool_call\]\napply_patch/);
+    assert.match(output.value, /\[error\][\s\S]*visible stream error/);
+    assert.match(output.value, /\[tool_call\]\nuser_input_request[\s\S]*Need input/);
+    assert.doesNotMatch(output.value, /output-\d+/);
     assert.doesNotMatch(output.value, /historical answer/);
     assert.equal(fixture.turnBody.input, "first line\nsecond line\n");
     assert.deepEqual(fixture.turnBody.options, {
@@ -55,51 +62,13 @@ test("stream text arrives live, preserves stdin/options, and ignores history", {
   }
 });
 
-test("stream normal renders assistant/tools/files/errors/user response without replaying tool output", { timeout: 20_000 }, async () => {
-  const fixture = await createFixture();
-  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-normal-"));
-  try {
-    const child = spawn(process.execPath, [tsxCli, "src/cli/codexhub.ts", "--connect", fixture.url,
-      "send", threadId, "normal input", "--stream", "--cwd", cwd, "--machine", machineId], {
-      cwd: projectRoot,
-      env: {
-        ...process.env,
-        CODEX_HUB_DATA_DIR: dataDir,
-        CODEX_HUB_AUTH_TOKEN: authToken,
-        CODEX_HUB_PLUGIN_TELEGRAM: "0"
-      },
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    const output = collectOutput(child.stdout);
-    const errors = collectOutput(child.stderr);
-    const exitCode = await childExit(child);
-    assert.equal(exitCode, 0, errors.value);
-    assert.match(output.value, /Thread ID: stream-thread/);
-    assert.match(output.value, /\[commentary\][\s\S]*live commentary/);
-    assert.match(output.value, /\[final_answer\][\s\S]*live final/);
-    assert.match(output.value, /\[tool_call\]\nexec_command/);
-    assert.match(output.value, /\[tool_result\]/);
-    assert.match(output.value, /\[tool_call\]\napply_patch/);
-    assert.match(output.value, /\[error\][\s\S]*visible stream error/);
-    assert.match(output.value, /\[tool_call\]\nuser_input_request[\s\S]*Need input/);
-    assert.doesNotMatch(output.value, /historical answer/);
-    assert.doesNotMatch(output.value, /output-\d+/);
-    assert.equal(fixture.turnBody.input, "normal input");
-  } finally {
-    await rm(dataDir, { recursive: true, force: true });
-    await fixture.close();
-  }
-});
-
-test("conversation mode conflicts and output mode are rejected before reading stdin or contacting a backend", { timeout: 10_000 }, async () => {
+test("conversation mode conflicts and output mode are rejected before reading stdin or contacting a backend", { timeout: 30_000 }, async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-args-"));
   try {
     const cases = [
-      { args: ["--stream", "--json"], error: /--stream cannot be combined with --json/ },
-      { args: ["--stream", "--no-wait"], error: /--stream cannot be combined with --no-wait/ },
-      { args: ["--no-wait", "--stream"], error: /--stream cannot be combined with --no-wait/ },
-      { args: ["--wait", "--no-wait"], error: /--wait cannot be combined with --no-wait/ },
-      { args: ["--no-wait", "--wait"], error: /--wait cannot be combined with --no-wait/ },
+      { args: ["--stream"], error: /unknown option '--stream'/ },
+      { args: ["--wait"], error: /unknown option '--wait'/ },
+      { args: ["--no-wait"], error: /unknown option '--no-wait'/ },
       { args: ["--output", "normal"], error: /unknown option '--output'/ }
     ];
     for (const operation of ["start", "send"] as const) {
@@ -153,31 +122,7 @@ test("send defaults to delivery confirmation without a realtime subscription", {
   }
 });
 
-test("send --wait waits for the final result without requiring stream output", { timeout: 20_000 }, async () => {
-  const fixture = await createFixture();
-  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-send-wait-"));
-  try {
-    const child = spawn(process.execPath, [tsxCli, "src/cli/codexhub.ts", "--connect", fixture.url,
-      "send", threadId, "waited send", "--wait", "--cwd", cwd, "--machine", machineId], {
-      cwd: projectRoot,
-      env: { ...process.env, CODEX_HUB_DATA_DIR: dataDir, CODEX_HUB_AUTH_TOKEN: authToken, CODEX_HUB_PLUGIN_TELEGRAM: "0" },
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    const output = collectOutput(child.stdout);
-    const errors = collectOutput(child.stderr);
-    const exitCode = await childExit(child);
-    assert.equal(exitCode, 0, errors.value);
-    assert.match(output.value, /Thread ID: stream-thread/);
-    assert.match(output.value, /live final/);
-    assert.equal(fixture.subscriptions, 1);
-    assert.equal(fixture.turnBody.input, "waited send");
-  } finally {
-    await rm(dataDir, { recursive: true, force: true });
-    await fixture.close();
-  }
-});
-
-test("start remains waiting by default", { timeout: 20_000 }, async () => {
+test("start defaults to a persistent listener until end", { timeout: 20_000 }, async () => {
   const fixture = await createFixture();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-start-default-"));
   try {
@@ -189,6 +134,13 @@ test("start remains waiting by default", { timeout: 20_000 }, async () => {
     });
     const output = collectOutput(child.stdout);
     const errors = collectOutput(child.stderr);
+    await waitFor(() => output.value.includes("live final"), "persistent first turn output");
+    const exitedBeforeEnd = await Promise.race([
+      childExit(child).then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250))
+    ]);
+    assert.equal(exitedBeforeEnd, false, "default start must keep listening after the first turn");
+    fixture.end();
     const exitCode = await childExit(child);
     assert.equal(exitCode, 0, errors.value);
     assert.match(output.value, /Thread ID: stream-thread/);
@@ -198,6 +150,97 @@ test("start remains waiting by default", { timeout: 20_000 }, async () => {
   } finally {
     await rm(dataDir, { recursive: true, force: true });
     await fixture.close();
+  }
+});
+
+test("persistent start carries send, stop, send, and end through one listener", { timeout: 30_000 }, async () => {
+  const fixture = await createFixture();
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-lifecycle-"));
+  const run = (args: string[]) => {
+    const child = spawn(process.execPath, [tsxCli, "src/cli/codexhub.ts", "--connect", fixture.url, ...args], {
+      cwd: projectRoot,
+      env: { ...process.env, CODEX_HUB_DATA_DIR: dataDir, CODEX_HUB_AUTH_TOKEN: authToken, CODEX_HUB_PLUGIN_TELEGRAM: "0" },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const output = collectOutput(child.stdout);
+    const errors = collectOutput(child.stderr);
+    return childExit(child).then((code) => ({ code, output: output.value, errors: errors.value }));
+  };
+  try {
+    const start = spawn(process.execPath, [tsxCli, "src/cli/codexhub.ts", "--connect", fixture.url,
+      "start", "first", "--name", "Lifecycle", "--cwd", cwd, "--machine", machineId], {
+      cwd: projectRoot,
+      env: { ...process.env, CODEX_HUB_DATA_DIR: dataDir, CODEX_HUB_AUTH_TOKEN: authToken, CODEX_HUB_PLUGIN_TELEGRAM: "0" },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const output = collectOutput(start.stdout);
+    const errors = collectOutput(start.stderr);
+    await waitFor(() => output.value.includes("live final #1"), "first lifecycle turn");
+
+    const firstSend = await run(["send", threadId, "second", "--cwd", cwd, "--machine", machineId]);
+    assert.equal(firstSend.code, 0, firstSend.errors);
+    await waitFor(() => (output.value.match(/live final/g) ?? []).length >= 2, "send output on original listener");
+
+    fixture.setRunning(true);
+    const stopped = await run(["stop", threadId, "--timeout", "5", "--json"]);
+    assert.equal(stopped.code, 0, stopped.errors);
+    assert.match(stopped.output, /"running":false/);
+    const secondSend = await run(["send", threadId, "after stop", "--cwd", cwd, "--machine", machineId]);
+    assert.equal(secondSend.code, 0, secondSend.errors);
+    await waitFor(() => (output.value.match(/live final/g) ?? []).length >= 3, "post-stop send output");
+
+    fixture.setRunning(true);
+    const ended = await run(["end", threadId, "--timeout", "5", "--json"]);
+    assert.equal(ended.code, 0, ended.errors);
+    assert.match(ended.output, /"operation":"end"/);
+    const startExit = await childExit(start);
+    assert.equal(startExit, 0, errors.value);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+    await fixture.close();
+  }
+});
+
+test("persistent timeout and realtime disconnect exit and release the listener", { timeout: 20_000 }, async () => {
+  const runPersistent = async (fixture: Fixture, timeout?: string) => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-cli-release-"));
+    const child = spawn(process.execPath, [tsxCli, "src/cli/codexhub.ts", "--connect", fixture.url,
+      "start", "release", "--name", "Release", "--cwd", cwd, "--machine", machineId,
+      ...(timeout ? ["--timeout", timeout] : [])], {
+      cwd: projectRoot,
+      env: { ...process.env, CODEX_HUB_DATA_DIR: dataDir, CODEX_HUB_AUTH_TOKEN: authToken, CODEX_HUB_PLUGIN_TELEGRAM: "0" },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const output = collectOutput(child.stdout);
+    const errors = collectOutput(child.stderr);
+    const exit = childExit(child);
+    return { child, output, errors, exit, dataDir };
+  };
+
+  const timeoutFixture = await createFixture();
+  const timeoutRun = await runPersistent(timeoutFixture, "1");
+  try {
+    await waitFor(() => timeoutFixture.turnResponseSent && timeoutRun.output.value.includes("live final #1"), "idle listener before timeout");
+    const timeoutExit = await timeoutRun.exit;
+    assert.notEqual(timeoutExit, 0);
+    assert.match(timeoutRun.output.value + timeoutRun.errors.value, /timed out/);
+    await waitFor(() => timeoutFixture.activeSockets() === 0, "timeout listener cleanup");
+  } finally {
+    await rm(timeoutRun.dataDir, { recursive: true, force: true });
+    await timeoutFixture.close();
+  }
+
+  const disconnectFixture = await createFixture();
+  const disconnectRun = await runPersistent(disconnectFixture);
+  try {
+    await waitFor(() => disconnectRun.output.value.includes("live final #1"), "disconnect listener output");
+    disconnectFixture.disconnect();
+    const disconnectExit = await disconnectRun.exit;
+    assert.notEqual(disconnectExit, 0);
+    await waitFor(() => disconnectFixture.activeSockets() === 0, "disconnect listener cleanup");
+  } finally {
+    await rm(disconnectRun.dataDir, { recursive: true, force: true });
+    await disconnectFixture.close();
   }
 });
 
@@ -402,7 +445,14 @@ type Fixture = {
   url: string;
   turnBody: { input?: string; options?: unknown };
   turnResponseSent: boolean;
+  turns: number;
+  lastSeq: number;
   subscriptions: number;
+  end: () => void;
+  running: boolean;
+  setRunning: (running: boolean) => void;
+  activeSockets: () => number;
+  disconnect: () => void;
   close: () => Promise<void>;
 };
 
@@ -412,7 +462,14 @@ const createFixture = async (): Promise<Fixture> => {
     url: "",
     turnBody: {},
     turnResponseSent: false,
+    turns: 0,
+    lastSeq: 1,
     subscriptions: 0,
+    end: () => undefined,
+    running: false,
+    setRunning: () => undefined,
+    activeSockets: () => 0,
+    disconnect: () => undefined,
     close: async () => undefined
   };
   const server = createServer(async (request, response) => {
@@ -435,15 +492,30 @@ const createFixture = async (): Promise<Fixture> => {
       return;
     }
     if (request.method === "GET" && requestUrl === `/api/threads/${threadId}`) {
-      writeJson(response, 200, { threadId, workingDirectory: cwd, runtime: { machineId } });
+      writeJson(response, 200, { threadId, workingDirectory: cwd, runtime: { machineId }, running: state.running, status: state.running ? "running" : "idle" });
+      return;
+    }
+    if (request.method === "POST" && requestUrl === `/api/threads/${threadId}/stop`) {
+      state.running = false;
+      writeJson(response, 200, { stopped: true });
+      return;
+    }
+    if (request.method === "POST" && requestUrl === `/api/threads/${threadId}/end`) {
+      if (state.running) {
+        writeJson(response, 409, { ended: false, error: "thread is still running" });
+        return;
+      }
+      state.end();
+      writeJson(response, 200, { ended: true, lastSeq: state.lastSeq });
       return;
     }
     if (request.method === "POST" && requestUrl.startsWith(`/api/threads/${threadId}/turn`)) {
       state.turnBody = JSON.parse(body) as { input?: string; options?: unknown };
-      setTimeout(() => sendTurn(sockets), 25);
+      state.turns += 1;
+      setTimeout(() => sendTurn(sockets, state.turns, state), 25);
       setTimeout(() => {
         state.turnResponseSent = true;
-        writeJson(response, 200, { ok: true, submissionId: "submission", delivery: "turn", lastSeq: 10 });
+        writeJson(response, 200, { ok: true, submissionId: "submission", delivery: "turn", lastSeq: state.lastSeq });
       }, 175);
       return;
     }
@@ -463,7 +535,7 @@ const createFixture = async (): Promise<Fixture> => {
       const parsed = JSON.parse(String(message)) as { type?: string; threadId?: string };
       if (parsed.type !== "subscribe_thread" || parsed.threadId !== threadId) return;
       socket.send(JSON.stringify({ type: "thread", kind: "thread", threadId, historical: true, seq: 1,
-        records: [record("history", { type: "agent_message", message: "historical answer" })] }));
+        records: [record("history", { type: "agent_message", message: "historical answer" })], queue: [] }));
       socket.send(JSON.stringify({ type: "thread_subscribed", threadId }));
     });
   });
@@ -471,6 +543,19 @@ const createFixture = async (): Promise<Fixture> => {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   state.url = `http://127.0.0.1:${address.port}`;
+  state.setRunning = (running) => { state.running = running; };
+  state.activeSockets = () => sockets.size;
+  state.disconnect = () => {
+    for (const socket of sockets) socket.terminate();
+  };
+  state.end = () => {
+    state.lastSeq += 1;
+    for (const socket of sockets) {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({
+        type: "thread", kind: "thread", threadId, seq: state.lastSeq, lifecycle: "end"
+      }));
+    }
+  };
   state.close = async () => {
     for (const socket of sockets) socket.terminate();
     await new Promise<void>((resolve) => websocket.close(() => resolve()));
@@ -480,29 +565,33 @@ const createFixture = async (): Promise<Fixture> => {
   return state;
 };
 
-const sendTurn = (sockets: Set<WebSocket>) => {
-  let seq = 2;
-  const send = (recordValue: unknown) => {
+const sendTurn = (sockets: Set<WebSocket>, turnNumber = 1, state?: Fixture) => {
+  let seq = (turnNumber - 1) * 20 + 2;
+  const suffix = turnNumber === 1 ? "" : `-${turnNumber}`;
+  const send = (recordValue: Record<string, unknown>) => {
     for (const socket of sockets) {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "record", kind: "record", threadId, seq: seq++, record: recordValue }));
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({
+        type: "record", kind: "record", threadId, seq: seq++, record: { ...recordValue, id: `${String(recordValue.id)}${suffix}` }
+      }));
     }
   };
   send(record("commentary", { type: "agent_message", phase: "commentary", message: "live commentary" }));
-  send(record("tool-call", { type: "function_call", name: "exec_command", call_id: "call", arguments: "{\"cmd\":\"printf\"}", status: "in_progress" }, "response_item"));
-  send(record("shell", { type: "local_shell_call", call_id: "shell", action: { type: "exec", command: ["printf"] }, status: "in_progress", aggregated_output: "$ printf\nprefix" }, "response_item"));
+  send(record("tool-call", { type: "function_call", name: "exec_command", call_id: `call${suffix}`, arguments: "{\"cmd\":\"printf\"}", status: "in_progress" }, "response_item"));
+  send(record("shell", { type: "local_shell_call", call_id: `shell${suffix}`, action: { type: "exec", command: ["printf"] }, status: "in_progress", aggregated_output: "$ printf\nprefix" }, "response_item"));
   for (const socket of sockets) {
-    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "record_delta", kind: "record_delta", threadId, seq: seq++, delta: { recordId: "shell", field: "aggregated_output", append: "\nnext" } }));
+    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "record_delta", kind: "record_delta", threadId, seq: seq++, delta: { recordId: `shell${suffix}`, field: "aggregated_output", append: "\nnext" } }));
   }
   send(record("tool-result", {
-    type: "function_call_output", call_id: "call", status: "completed",
+    type: "function_call_output", call_id: `call${suffix}`, status: "completed",
     output: Array.from({ length: 12 }, (_, index) => `output-${index + 1}`).join("\n")
   }, "response_item"));
   send(record("file", { type: "file_change", status: "completed", changes: [{ path: "file.txt", kind: "update" }] }, "response_item"));
   send({ id: "error", type: "error", payload: { message: "visible stream error" } });
-  send(record("user-input", { type: "user_input_request", status: "pending_user_input", questions: [{ id: "q", question: "Need input", header: "Input", isOther: false, isSecret: false, options: null }] }, "response_item"));
-  send(record("final", { type: "agent_message", phase: "final_answer", message: "live final" }));
+  send(record("user-input", { type: "user_input_request", status: "pending_user_input", questions: [{ id: `q${suffix}`, question: "Need input", header: "Input", isOther: false, isSecret: false, options: null }] }, "response_item"));
+  send(record("final", { type: "agent_message", phase: "final_answer", message: `live final #${turnNumber}` }));
+  if (state) state.lastSeq = (turnNumber - 1) * 20 + 11;
   for (const socket of sockets) {
-    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "done", kind: "done", threadId, seq: 10 }));
+    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "done", kind: "done", threadId, seq: (turnNumber - 1) * 20 + 11 }));
   }
 };
 
@@ -531,6 +620,10 @@ const collectOutput = (stream: NodeJS.ReadableStream) => {
 };
 
 const childExit = (child: ReturnType<typeof spawn>) => new Promise<number>((resolve, reject) => {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    resolve(child.exitCode ?? 1);
+    return;
+  }
   child.once("error", reject);
   child.once("close", (code) => resolve(code ?? 1));
 });

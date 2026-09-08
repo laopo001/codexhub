@@ -80,6 +80,14 @@ export const runConversationControl = async (
       // have become active while that read was closing, so re-check canonical
       // HTTP state before reporting end success.
       await waitForIdle(options, threadId, controller.signal, deadline);
+      const ended = await requestJson<{ ended?: boolean }>(
+        options.baseUrl,
+        `/api/threads/${encodeURIComponent(threadId)}/end`,
+        { method: "POST", signal: controller.signal },
+        remainingMs(deadline),
+        options.authToken
+      );
+      if (ended.ended !== true) throw new Error("CodexHub end was not confirmed by the backend.");
     }
 
     return {

@@ -114,6 +114,7 @@ export type LocalServerAutostartFixture = {
   environment: () => NodeJS.ProcessEnv;
   runCli: (args: string[], options?: { built?: boolean; env?: NodeJS.ProcessEnv }) => Promise<CliResult>;
   startCli: (args: string[], options?: { built?: boolean; env?: NodeJS.ProcessEnv }) => Promise<RunningCli>;
+  startPersistent: (args: string[], options?: { built?: boolean; env?: NodeJS.ProcessEnv }) => Promise<{ running: RunningCli; threadId: string }>;
   readStats: () => Promise<{ startCount: number; pids: number[] }>;
   serverPid: () => Promise<number | undefined>;
   authorityPids: () => Promise<number[]>;
@@ -189,6 +190,22 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
       stop: () => stopChildProcess(child)
     } satisfies RunningCli;
   };
+  const startPersistent = async (args: string[], options: { built?: boolean; env?: NodeJS.ProcessEnv } = {}) => {
+    const running = await startCli(["start", ...args], options);
+    await waitForFixture(
+      async () => running.output(),
+      (output) => /Thread ID:\s*\S+/.test(output),
+      "persistent start thread id"
+    );
+    await waitForFixture(
+      async () => running.output(),
+      (output) => /fake local response|mock response/.test(output),
+      "persistent start first response"
+    );
+    const threadId = running.output().match(/Thread ID:\s*(\S+)/)?.[1];
+    if (!threadId) throw new Error("Persistent start did not print a thread ID.");
+    return { running, threadId };
+  };
   const readStats = async () => JSON.parse(await readFile(statsPath, "utf8")) as { startCount: number; pids: number[] };
   const serverPid = async () => {
     try {
@@ -224,7 +241,7 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
     await stopAuthority();
     await rm(root, { recursive: true, force: true });
   };
-  return { root, dataDir, mockCodexPath, statsPath, port, url: `http://127.0.0.1:${port}`, authToken, environment: baseEnv, runCli, startCli, readStats, serverPid, authorityPids, stopServer, stopAuthority, close };
+  return { root, dataDir, mockCodexPath, statsPath, port, url: `http://127.0.0.1:${port}`, authToken, environment: baseEnv, runCli, startCli, startPersistent, readStats, serverPid, authorityPids, stopServer, stopAuthority, close };
 };
 
 const spawnCli = (

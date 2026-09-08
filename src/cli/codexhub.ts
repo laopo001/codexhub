@@ -13,7 +13,7 @@ import {
   type CodexAppServerLaunchOptions
 } from "./codexAppServerProcess.js";
 import { runCodexhubMachine } from "./codexhubMachine.js";
-import { runConversation, type ConversationRunOptions, ConversationInterruptedError } from "./conversation.js";
+import { requestJson, runConversation, type ConversationRunOptions, ConversationInterruptedError } from "./conversation.js";
 import {
   runConversationControl,
   type ConversationControlOperation,
@@ -87,11 +87,8 @@ type ConversationCommandOptions = {
   cwd?: string;
   model?: string;
   effort?: string;
-  stream?: boolean;
-  wait?: boolean;
   noWait?: boolean;
-  noWaitExplicit?: boolean;
-  waitExplicit?: boolean;
+  persistent?: boolean;
   json?: boolean;
   timeout?: string;
 };
@@ -218,18 +215,8 @@ program
   .option("--cwd <path>", "working directory on the target machine")
   .option("--model <model>", "model override for this turn")
   .option("--effort <effort>", "reasoning effort override for this turn")
-  .option("--stream", "stream canonical records as they arrive")
-  .option("--no-wait", "return after the backend accepts the submission")
-  .option("--wait", "wait for the final result")
-  .option("--timeout <seconds>", "wait timeout in seconds", String(600))
-  .option("--json", "print a JSON result")
-  .on("option:no-wait", function(this: Command) {
-    this.setOptionValue("noWaitExplicit", true);
-  })
-  .on("option:wait", function(this: Command) {
-    this.setOptionValue("waitExplicit", true);
-  })
-  .description("Create a thread, name it, and send its first message")
+  .option("--timeout <seconds>", "listener timeout in seconds")
+  .description("Create a named thread and stream its conversation until end")
   .action(async (input: string, options: ConversationCommandOptions) => {
     await runConversationCommand({
       operation: "start",
@@ -239,9 +226,8 @@ program
       cwd: options.cwd,
       model: options.model,
       effort: options.effort,
-      stream: options.stream,
-      noWait: resolveConversationNoWait("start", options),
-      json: options.json,
+      noWait: false,
+      persistent: true,
       timeout: options.timeout
     });
   });
@@ -254,17 +240,8 @@ program
   .option("--cwd <path>", "working directory on the target machine")
   .option("--model <model>", "model override for this turn")
   .option("--effort <effort>", "reasoning effort override for this turn")
-  .option("--stream", "stream canonical records as they arrive")
-  .option("--no-wait", "return after the backend accepts the submission")
-  .option("--wait", "wait for the final result")
-  .option("--timeout <seconds>", "wait timeout in seconds", String(600))
+  .option("--timeout <seconds>", "request timeout in seconds")
   .option("--json", "print a JSON result")
-  .on("option:no-wait", function(this: Command) {
-    this.setOptionValue("noWaitExplicit", true);
-  })
-  .on("option:wait", function(this: Command) {
-    this.setOptionValue("waitExplicit", true);
-  })
   .description("Resume a thread and send a message")
   .action(async (threadId: string, input: string, options: ConversationCommandOptions) => {
     await runConversationCommand({
@@ -275,8 +252,8 @@ program
       cwd: options.cwd,
       model: options.model,
       effort: options.effort,
-      stream: options.stream,
-      noWait: resolveConversationNoWait("send", options),
+      noWait: true,
+      persistent: false,
       json: options.json,
       timeout: options.timeout
     });
@@ -516,6 +493,8 @@ async function runConversationCommand(
   options: ConversationCommandOptions & Pick<ConversationRunOptions, "operation" | "input"> & { threadId?: string }
 ) {
   validateConversationCommand(options);
+  const noWait = options.noWait === true;
+  const persistent = options.persistent === true;
   const timeoutSeconds = parseTimeoutSecondsOption(options.timeout);
   const json = options.json === true;
   const input = await readConversationInput(options.input);
@@ -527,20 +506,20 @@ async function runConversationCommand(
   const backend = await resolveConversationBackend(options.cwd, conversationDeadline);
   console.error(`codexhub backend: ${new URL(backend.baseUrl).origin} (${backend.status})`);
   const lease = backend.status === "connected"
-    ? undefined
+    ? await authorityLeaseIfSupported(backend.baseUrl, process.env.CODEX_HUB_AUTH_TOKEN)
     : startAuthorityClientLease({
       baseUrl: backend.baseUrl,
       authToken: backend.authority.authToken,
       clientId: `cli-${randomUUID()}`
     });
-  const remainingTimeoutMs = conversationDeadline - Date.now();
+  const leaseFailureController = new AbortController();
   try {
+    await lease?.ready;
+    const remainingTimeoutMs = conversationDeadline - Date.now();
     if (remainingTimeoutMs <= 0) throw new Error("CLI conversation timeout expired during local server startup; no turn was submitted.");
     const remainingTimeoutSeconds = remainingTimeoutMs / 1000;
-    const renderer = options.stream
-      ? new ConversationStreamRenderer()
-      : undefined;
-    const result = await runConversation({
+    const renderer = !json && !noWait ? new ConversationStreamRenderer() : undefined;
+    const conversation = runConversation({
       operation: options.operation,
       input,
       name: options.name,
@@ -549,11 +528,13 @@ async function runConversationCommand(
       cwd: options.cwd,
       model: options.model,
       effort: options.effort,
-      noWait: options.noWait,
+      noWait,
+      persistent,
+      externalSignal: leaseFailureController.signal,
       json: options.json,
       baseUrl: backend.baseUrl,
       authToken: backend.status === "connected" ? process.env.CODEX_HUB_AUTH_TOKEN : backend.authority.authToken,
-      timeoutSeconds: remainingTimeoutSeconds,
+      timeoutSeconds: options.timeout === undefined ? (persistent ? undefined : remainingTimeoutSeconds) : remainingTimeoutSeconds,
       onThreadReady: renderer
         ? (target) => renderer.threadStarted(target)
         : json ? undefined : (target) => console.log(`Thread ID: ${target.threadId}`),
@@ -562,13 +543,19 @@ async function runConversationCommand(
         ? (error) => renderer.error({ message: error.message })
         : undefined
     });
+    let result;
+    try {
+      result = await Promise.race([
+        conversation,
+        ...(lease ? [lease.failed] : [])
+      ]);
+    } catch (error) {
+      leaseFailureController.abort();
+      await conversation.catch(() => undefined);
+      throw error;
+    }
     if (renderer) {
-      if (result.waited) {
-        // The HTTP response and this lastSeq wait are the completion boundary;
-        // stream records themselves were emitted by the WS callback above.
-        if (result.lastSeq === undefined) throw new Error("CodexHub completed a stream without a lastSeq barrier.");
-        renderer.completed();
-      }
+      if (result.waited) renderer.completed();
       return;
     }
     if (json) {
@@ -584,6 +571,7 @@ async function runConversationCommand(
     }
     for (const text of result.assistant) console.log(text);
   } finally {
+    leaseFailureController.abort();
     lease?.stop();
   }
 }
@@ -652,23 +640,27 @@ async function resolveConversationBackend(cwd: string | undefined, deadline: num
   });
 }
 
-function resolveConversationNoWait(operation: "start" | "send", options: ConversationCommandOptions) {
-  const explicitNoWait = options.noWaitExplicit === true;
-  const explicitWait = options.waitExplicit === true;
-  if (explicitNoWait && explicitWait) throw new Error("--wait cannot be combined with --no-wait.");
-  if (explicitNoWait && options.stream === true) throw new Error("--stream cannot be combined with --no-wait.");
-  return explicitNoWait || operation === "send" && !explicitWait && options.stream !== true;
-}
-
 function validateConversationCommand(options: ConversationCommandOptions) {
-  const stream = options.stream === true;
-  if (stream && options.json) throw new Error("--stream cannot be combined with --json.");
-  if (stream && options.noWait) throw new Error("--stream cannot be combined with --no-wait.");
   const parsed = threadRunOptionsSchema.safeParse({
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { modelReasoningEffort: options.effort })
   });
   if (!parsed.success) throw new Error(`Invalid conversation turn options: ${parsed.error.issues[0]?.message ?? "invalid options"}`);
+}
+
+async function authorityLeaseIfSupported(baseUrl: string, authToken: string | undefined) {
+  try {
+    const health = await requestJson<{ authority?: unknown }>(baseUrl, "/api/health", {}, 5_000, authToken);
+    if (!health.authority || typeof health.authority !== "object") return undefined;
+    return startAuthorityClientLease({
+      baseUrl,
+      authToken,
+      clientId: `cli-${randomUUID()}`
+    });
+  } catch {
+    // Ordinary servers/test fixtures return 409 for the embedded-only heartbeat.
+    return undefined;
+  }
 }
 
 async function readConversationInput(input: string) {

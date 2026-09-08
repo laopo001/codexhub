@@ -10,9 +10,11 @@ CLI 的 turn 请求现在使用 `source: "cli"`，现有来源枚举与线程、
 
 # 对话 CLI（未发布）
 
-对话 CLI 增加 `--model`、`--effort`、可读文本 `--stream` 和 stdin `-` 输入。`delegate-to-codex` skill 的委派说明直接使用 `codexhub --connect <后端>` 创建该后端的 thread，并使用准确 threadId 继续任务；不指定连接时使用默认本地 server 的复用/自动启动路径。Web 通过现有 thread picker 查看同一会话，不需要迁移历史或新增父子任务模型。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
+已移除 `start` / `send` 的 `--stream`、`--wait`、`--no-wait` 参数，以及 `start --json`。`start` 固定持续流式输出，`send` 固定只投递提示词、引导或新任务；需要机器可读的投递确认时使用 `send --json`。CLI 和后端须同步更新：默认持续监听的结束通知依赖新增的 `POST /api/threads/:threadId/end`；该接口仅在 thread 已空闲且队列为空时发出通知。
 
-新增 `codexhub start <input> --name <name>` 创建命名 thread 并发送消息，`codexhub send <threadId> <input>` 继续同一会话。全局 `--connect` / `CODEX_HUB_SERVER_URL` 选择已有本机或远端 CodexHub 后端，认证使用 `CODEX_HUB_AUTH_TOKEN`。start 默认等待回复；send 默认只返回投递确认，`--wait` 等待最终结果，`--stream` 实时输出，`--no-wait` 保留为显式投递确认选项。`--no-wait` 不得与 `--wait` 或 `--stream` 混用。会话仍由官方 threadId 标识，不新增公共 session 模型或本地会话存储，也不会为每条命令新起 runtime。
+对话 CLI 增加 `--model`、`--effort` 和 stdin `-` 输入；默认 `start` 持续通过 `/api/events/ws` 输出同一 thread 的 canonical records，直到 `end` 的 transient lifecycle 信号，`send` 只返回投递确认，后续执行回复继续由原 `start` 输出。`delegate-to-codex` skill 的委派说明直接使用 `codexhub --connect <后端>` 创建该后端的 thread，并使用准确 threadId 继续任务；不指定连接时使用默认本地 server 的复用/自动启动路径。Web 通过现有 thread picker 查看同一会话，不需要迁移历史或新增父子任务模型。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。历史工具记录解析仍可识别旧命令中的 `--stream` 参数。
+
+新增 `codexhub start <input> --name <name>` 创建命名 thread 并发送消息，`codexhub send <threadId> <input>` 继续同一会话，`codexhub stop <threadId>` 停止当前轮并保持 start 监听，`codexhub end <threadId>` 取消队列、停止当前轮并结束原 start 监听。全局 `--connect` / `CODEX_HUB_SERVER_URL` 选择已有本机或远端 CodexHub 后端，认证使用 `CODEX_HUB_AUTH_TOKEN`。start 默认持续监听；send 只投递提示词、引导或后续新任务并返回确认。会话仍由官方 threadId 标识，不新增公共 session 模型或本地会话存储，也不会为每条命令新起 runtime。
 
 连接参数首选 `--connect <url>`，旧 `--server <url>` 继续兼容；同时传入不同地址时明确报错。`register --to` 仍表示父注册目标。
 

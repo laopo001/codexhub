@@ -5,7 +5,7 @@ import { codexhubToolCallFromMessage, refreshCodexhubToolCall, codexhubAttachedT
 import type { RuntimeSummary, WebRecordView } from "../../src/web/types.js";
 
 const childId = "01a0803a-5615-7d80-98f4-68d74f89185b";
-const command = "codexhub start '检查登录问题' --name '登录检查' --model gpt-5.6-luna --effort xhigh --cwd /workspace --stream";
+const command = "codexhub start '检查登录问题' --name '登录检查' --model gpt-5.6-luna --effort xhigh --cwd /workspace";
 const shell = (output: string): WebRecordView => recordsToViews([{ id: "shell", type: "response_item", payload: {
   type: "local_shell_call", call_id: "shell-call", status: "in_progress", action: { command: ["/usr/bin/zsh", "-lc", command] }, aggregated_output: output
 } }])[0];

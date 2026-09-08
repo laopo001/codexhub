@@ -224,6 +224,15 @@ const createFixture = async (options: {
       return;
     }
 
+    if (method === "POST" && pathname === `/api/threads/${threadId}/end`) {
+      if (thread.running || thread.queue.length > 0) {
+        writeJson(response, 409, { ended: false, error: "thread is not idle and queue is not empty" });
+        return;
+      }
+      writeJson(response, 200, { ended: true, lastSeq: 2 });
+      return;
+    }
+
     const threadMatch = pathname.match(/^\/api\/threads\/([^/]+)(?:\/queue\/([^/]+))?$/);
     if (!threadMatch) {
       writeJson(response, 404, { error: "not found" });

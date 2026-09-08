@@ -14,6 +14,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const CODEXHUB_EXECUTABLES = new Set(["codexhub", "cxh", "codexhub.cmd", "cxh.cmd"]);
 const SHELL_EXECUTABLES = new Set(["ash", "bash", "dash", "fish", "ksh", "sh", "zsh"]);
 const VALUE_OPTIONS = new Set(["--connect", "--cwd", "--effort", "--machine", "--model", "--name", "--server", "--timeout"]);
+// `--stream` is retired from the CLI. Keep it only for historical tool-record
+// parsing so old shell records remain inspectable in the Web UI.
 const FLAG_OPTIONS = new Set(["--json", "--no-wait", "--stream", "--wait"]);
 
 type ShellToken = {

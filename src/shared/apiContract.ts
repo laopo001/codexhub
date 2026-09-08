@@ -385,6 +385,12 @@ export type ThreadStopPayload = {
   stopped?: boolean;
 };
 
+/** thread end mutation 返回值；end 只在 core 重验 idle+queue empty 后成功。 */
+export type ThreadEndPayload = {
+  ended?: boolean;
+  lastSeq?: number;
+};
+
 /** thread background terminal terminate mutation 返回值。 */
 export type ThreadBackgroundTerminalTerminatePayload = {
   terminated?: boolean;
@@ -846,6 +852,7 @@ const threadProjectionEventSchema = z.object({
   seq: z.number().int().nonnegative(),
   threadId: z.string().min(1),
   kind: z.enum(["thread", "record", "record_delta", "done"]),
+  lifecycle: z.literal("end").optional(),
   historical: z.boolean().optional(),
   thread: threadProjectionSummarySchema,
   record: z.unknown().optional(),

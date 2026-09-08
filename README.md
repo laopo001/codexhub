@@ -157,14 +157,14 @@ CLI 可以直接启动对话，或连接指定的 CodexHub 后端：
 # 未配置后端地址时，先复用或自动启动默认本地 server，再创建对话
 codexhub start "分析这个项目的结构" --name "项目分析"
 
-# 使用 start 输出的 threadId 继续对话；send 默认只返回投递确认
+# 使用 start 输出的 threadId 继续对话；send 只投递，回复由原 start 输出
 codexhub send <threadId> "先关注注册流程"
 
-# 显式等待本轮最终结果
-codexhub send <threadId> "补充测试" --wait
+# 停止当前轮，原 start 监听仍会保持
+codexhub stop <threadId>
 
-# 显式等待并实时观察可读文本
-codexhub send <threadId> "继续测试" --stream
+# 取消队列、停止当前轮并结束原 start 监听
+codexhub end <threadId>
 
 # 连接另一台 CodexHub 后端；cwd 是目标 machine 上的路径
 codexhub --connect http://remote-host:28788 start "分析这个项目" --name "远程分析" --cwd /srv/project
@@ -175,23 +175,23 @@ codexhub --connect http://remote-host:28788 send <threadId> "继续分析"
 
 默认选择目标后端的在线 local machine，显式 `--machine <machineId>` 可以选择其 SSH 或 registered machine。CLI 中的会话就是现有 `thread`，复用同一个 machine runtime。
 
-`start` 默认等待本次提交执行完成；`send` 默认只等待后端接受投递，使用 `--wait` 才等待最终结果，使用 `--stream` 才实时输出 canonical records。`--no-wait` 仍可显式请求投递确认，但不能与 `--wait` 或 `--stream` 混用；Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动与 VSCode/Electron 相同的本机 authority（默认 loopback 的 `28788`，WSL 为 `28789`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
+`start` 默认在首轮完成后继续监听同一 thread 的实时 canonical records，直到执行 `codexhub end <threadId>`；后续 `send` 的回复会继续由原 `start` 输出，`stop` 只停止当前轮并保留监听。`send` 只投递提示词、运行中的引导或后续新任务，返回投递确认；执行回复由原 `start` 输出。`--timeout` 可限制默认 start 的监听时长；未指定时没有整个监听的 600 秒上限。Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动与 VSCode/Electron 相同的本机 authority（默认 loopback 的 `28788`，WSL 为 `28789`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
 
-`--wait` 和 `--stream` 等待模式需要更新后的后端支持 `POST /api/threads/:threadId/turn?wait=true`；`--timeout <秒>` 可调整等待上限，`--json` 输出适合脚本读取的结果。
+`start` 和 `send` 均不再提供 `--stream`、`--wait` 或 `--no-wait`。`--timeout <秒>` 可限制监听或请求时长；`send --json` 输出适合脚本读取的投递确认，`start` 始终输出可读的实时内容。
 
 自动启动会验证端口上的 CodexHub 身份、当前数据目录和认证配置，不接管其它服务或自动换端口。启动日志位于数据目录的 `local-server-<端口>.log`；默认启动上限为 120 秒，可用 `CODEX_HUB_LOCAL_SERVER_START_TIMEOUT_MS` 调整，且不会超过本次 `--timeout` 的剩余预算。
 
 桌宠 Codex Activity 只给当前轮由 CLI 发起的活动加 `[cli]` 标签，Web 活动不加标签；运行、等待和失败状态仍独立显示。运行中补发引导不改变本轮来源，开始新一轮时更新来源。旧记录缺少来源时不推测。
 
-需要在终端实时观察执行时，使用 `--stream`，保留 `[commentary]`、`[final_answer]`，用 `[tool_call]` 显示工具名与关键参数，用 `[tool_result]` 显示完成状态和已有耗时。成功结果正文隐藏，长参数与失败诊断截断，等待期间不追加心跳。`--json` 仍是完成后的单个 JSON 结果，与 `--stream` 分开使用。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
+终端实时输出默认保留 `[commentary]`、`[final_answer]`，用 `[tool_call]` 显示工具名与关键参数，用 `[tool_result]` 显示完成状态和已有耗时。成功结果正文隐藏，长参数与失败诊断截断，等待期间不追加心跳。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
 
 ```bash
 codexhub --connect http://host:28788 start "检查项目结构" \
   --name "Luna 项目检查" --cwd /srv/project \
-  --model gpt-5.6-luna --effort xhigh --stream
+  --model gpt-5.6-luna --effort xhigh
 
 # 输入为 - 时从 stdin 读取完整任务
-cat task.txt | codexhub --connect http://host:28788 send <threadId> - --stream
+cat task.txt | codexhub --connect http://host:28788 send <threadId> -
 ```
 
 已安装的 `delegate-to-codex` skill 仍提供委派约定说明；实际命令直接使用 CodexHub：
@@ -200,7 +200,7 @@ cat task.txt | codexhub --connect http://host:28788 send <threadId> - --stream
 codexhub --connect http://host:28788 start "检查注册流程并补充测试" \
   --name "Luna 注册流程检查" --cwd /srv/project \
   --model gpt-5.6-luna --effort xhigh
-codexhub --connect http://host:28788 send <threadId> "先处理测试失败" --wait --cwd /srv/project
+codexhub --connect http://host:28788 send <threadId> "先处理测试失败" --cwd /srv/project
 ```
 
 不配置地址时，本地任务只需要：
@@ -216,7 +216,7 @@ codexhub start "检查当前项目" --name "Luna 检查" \
 export CODEX_HUB_SERVER_URL="http://host:28788"
 codexhub start "检查项目" --name "Luna 检查" --cwd /srv/project \
   --model gpt-5.6-luna --effort xhigh
-codexhub send <threadId> "继续检查" --wait --cwd /srv/project
+codexhub send <threadId> "继续检查" --cwd /srv/project
 ```
 
 显式 `--connect` 优先于环境变量。将 `export` 放入 `~/.zshrc` 可供后续终端使用；未设置或空值时走默认本地 server 的复用/自动启动路径。
