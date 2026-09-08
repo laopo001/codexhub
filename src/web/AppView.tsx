@@ -1,6 +1,7 @@
 import { Popconfirm, Tabs } from "antd";
 import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { subagentAssignmentForChild } from "../core/codexRecordView.js";
+import { CodexhubToolProvider } from "./CodexhubToolPreview.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { threadDisplayRecords } from "./appHelpers.js";
@@ -113,6 +114,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   );
 
   return (
+    <CodexhubToolProvider runtimes={workspace.runtimeList} threads={[...openThreads, ...(subagentThreadDialog?.thread ? [subagentThreadDialog.thread] : [])]} onOpen={openSubagentThread}>
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
       {!sidebarCollapsed ? (
         <button
@@ -212,5 +214,6 @@ export const AppView = ({ viewModel }: AppViewProps) => {
         </SubagentThreadDialog>
       ) : null}
     </main>
+    </CodexhubToolProvider>
   );
 };

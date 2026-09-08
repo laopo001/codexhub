@@ -1,4 +1,6 @@
 import React from "react";
+import { CodexhubToolPreview } from "../CodexhubToolPreview.js";
+import { codexhubToolCallFromMessage } from "./codexhubToolCall.js";
 import { Tag } from "antd";
 import { FileDiff, Image, Info, MessageSquareText, Plug, Search, ShieldCheck, Sparkles, Terminal, Users, Workflow } from "lucide-react";
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
@@ -319,7 +321,9 @@ export const formatInspectTitle = (message: WebRecordView) => {
   return toolCall ? `tool: ${toolCall.name}` : message.label;
 };
 
-export const renderToolMessageBody = (message: WebRecordView, status?: CodexRecordView["status"], statusText?: string) => {
+export const renderToolMessageBody = (message: WebRecordView, status?: CodexRecordView["status"], statusText?: string, parentThreadId?: string) => {
+  const invocation = parentThreadId ? codexhubToolCallFromMessage(message, parentThreadId) : null;
+  if (invocation) return <ToolInspectContext.Consumer>{onInspect => <CodexhubToolPreview call={invocation} onInspect={onInspect} />}</ToolInspectContext.Consumer>;
   const toolCall = parseToolCallMessage(message);
   if (toolCall) return webToolPresenters[toolCall.name]?.render?.(toolCall.args, status, statusText, message.statusDurationMs) ?? (
     <FunctionCallPreview message={message} toolCall={toolCall} status={status} statusText={statusText} statusDurationMs={message.statusDurationMs} />

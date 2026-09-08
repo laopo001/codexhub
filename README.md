@@ -177,6 +177,8 @@ codexhub --connect http://remote-host:8788 send <threadId> "继续分析"
 
 自动启动会验证端口上的 CodexHub 身份、当前数据目录和认证配置，不接管其它服务或自动换端口。启动日志位于数据目录的 `local-server-<端口>.log`；默认启动上限为 120 秒，可用 `CODEX_HUB_LOCAL_SERVER_START_TIMEOUT_MS` 调整，且不会超过本次 `--timeout` 的剩余预算。
 
+桌宠 Codex Activity 只给当前轮由 CLI 发起的活动加 `[cli]` 标签，Web 活动不加标签；运行、等待和失败状态仍独立显示。运行中补发引导不改变本轮来源，开始新一轮时更新来源。旧记录缺少来源时不推测。
+
 需要在终端实时观察执行时，使用 `--stream`，保留 `[commentary]`、`[final_answer]`，用 `[tool_call]` 显示工具名与关键参数，用 `[tool_result]` 显示完成状态和已有耗时。成功结果正文隐藏，长参数与失败诊断截断，等待期间不追加心跳。`--json` 仍是完成后的单个 JSON 结果，与 `--stream` 分开使用。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
 
 ```bash

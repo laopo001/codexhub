@@ -29,9 +29,20 @@ export const resolveVscodeChannel = (
   return null;
 };
 
+/** 来源徽标使用统一的小写短名；不用于工作区名称或协议标识。 */
+export const formatSourceBadgeLabel = (label: string): string => {
+  const normalized = label.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    "vs code": "vsc", vscode: "vsc",
+    insiders: "vsc-i", "vs code insiders": "vsc-i", "vscode insiders": "vsc-i", "vscode-insiders": "vsc-i",
+    registered: "reg", electron: "ele"
+  };
+  return labels[normalized] ?? normalized;
+};
+
 /** 统一的 VSCode 渠道紧凑徽标标识（如侧边栏 badge / 标签） */
 export const formatVscodeChannelBadge = (channel?: VscodeChannel): string =>
-  channel === "insiders" ? "Insiders" : "VS Code";
+  formatSourceBadgeLabel(channel === "insiders" ? "vscode-insiders" : "vscode");
 
 /** 统一的 VSCode surface 组名或标题前缀 */
 export const formatVscodeSurfacePrefix = (channel?: VscodeChannel): string =>

@@ -539,6 +539,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       ...(thread.activeTurnStartedAt ? { activeTurnStartedAt: thread.activeTurnStartedAt } : {}),
       ...(thread.activePlanProgress ? { activePlanProgress: thread.activePlanProgress } : {}),
       ...(thread.latestAgentMessage ? { latestAgentMessage: thread.latestAgentMessage } : {}),
+      ...(thread.source ? { source: thread.source } : {}),
       workingDirectory: thread.workingDirectory,
       updatedAt: thread.updatedAt,
       status: thread.running || thread.status === "running" ? "running" : "idle"

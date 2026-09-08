@@ -186,6 +186,7 @@ export const reduceConversationThreadState = (
     return {
       ...thread,
       ...action.thread,
+      source: action.thread.source,
       records: combineRecordSources(action.thread.records, thread.records),
       history: action.thread.history ?? thread.history,
       backgroundTerminals: action.thread.backgroundTerminals ?? thread.backgroundTerminals
@@ -211,6 +212,7 @@ export const reduceConversationThreadState = (
     return {
       ...thread,
       ...action.thread,
+      source: action.thread.source,
       ...(action.backgroundTerminals === undefined ? {} : { backgroundTerminals: action.backgroundTerminals }),
       history: action.snapshot?.history ?? thread.history,
       records,

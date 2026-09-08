@@ -229,9 +229,9 @@ test("resolveVscodeChannel prioritizes uriScheme and falls back to appName", () 
   assert.equal(resolveVscodeChannel(undefined, "Code"), "stable");
   assert.equal(resolveVscodeChannel(undefined, undefined), null);
 
-  assert.equal(formatVscodeChannelBadge("insiders"), "Insiders");
-  assert.equal(formatVscodeChannelBadge("stable"), "VS Code");
-  assert.equal(formatVscodeChannelBadge(undefined), "VS Code");
+  assert.equal(formatVscodeChannelBadge("insiders"), "vsc-i");
+  assert.equal(formatVscodeChannelBadge("stable"), "vsc");
+  assert.equal(formatVscodeChannelBadge(undefined), "vsc");
 
   assert.equal(formatVscodeSurfacePrefix("insiders"), "VS Code Insiders");
   assert.equal(formatVscodeSurfacePrefix("stable"), "VS Code");

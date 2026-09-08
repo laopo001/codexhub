@@ -1,3 +1,4 @@
+import { codexhubAttachedThread } from "../helpers/codexhubToolCall.js";
 import type { OpenThreadPresence } from "../../shared/apiContract.js";
 import type React from "react";
 import { Modal } from "antd";
@@ -736,7 +737,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       : currentDialog?.threadId === parentThreadId
         ? currentDialog
         : undefined;
-    const target = resolveSubagentThreadTarget(
+    const cliTarget = options.origin === "codexhub" ? codexhubAttachedThread(threadId, ctx.runtimeList, options.machineId) : undefined;
+    const target = options.origin === "codexhub"
+      ? cliTarget ? { machineId: cliTarget.runtime.machineId, workingDirectory: cliTarget.thread.workingDirectory, online: cliTarget.runtime.online, attached: true } : null
+      : resolveSubagentThreadTarget(
       parentThreadId,
       threadId,
       conversationThreads,
@@ -753,6 +757,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       );
     }
     ctx.setSubagentThreadDialog({
+      ...(options.origin ? { origin: options.origin } : {}),
       threadId,
       parentThreadId,
       ...(retainedParentDialog ? { parentDialog: retainedParentDialog } : {}),
@@ -766,7 +771,9 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ? ""
         : target
           ? "Cannot open the subagent thread while its machine runtime is offline."
-          : "Cannot resolve the parent thread runtime for this subagent."
+          : options.origin === "codexhub"
+            ? "当前后端未找到这个 CodexHub 线程，请核对 CLI 的连接地址。"
+            : "Cannot resolve the parent thread runtime for this subagent."
     });
     if (!target?.online) {
       return;

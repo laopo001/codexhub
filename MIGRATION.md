@@ -1,3 +1,7 @@
+# CLI 活动来源（未发布）
+
+CLI 的 turn 请求现在使用 `source: "cli"`，现有来源枚举与线程、machine activity 摘要同步扩展；没有新增第二个客户端来源字段。CLI 与 Web 都支持运行中 steer。CLI、接收后端及 registered 转发链上的后端需一起更新；旧后端不支持新来源时会拒绝请求。来源是运行时提示，不回填历史；未知来源不显示标签。
+
 # 对话自动启动与统一委派（未发布）
 
 `codexhub start` / `send` 未指定地址时确保默认本地 server 可用，再创建或恢复对话；server 在 CLI 退出后继续运行。`--connect`、兼容的 `--server` 或非空 `CODEX_HUB_SERVER_URL` 仍只连接指定后端，不可达时报错。

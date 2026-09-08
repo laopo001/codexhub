@@ -330,7 +330,7 @@ const postTurn = async (
   {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input, source: "web", ...(options ? { options } : {}) }),
+    body: JSON.stringify({ input, source: "cli", ...(options ? { options } : {}) }),
     signal
   },
   timeoutMs,

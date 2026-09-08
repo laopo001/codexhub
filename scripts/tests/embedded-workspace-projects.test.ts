@@ -161,13 +161,13 @@ test("groupProjectsByMachine groups embedded workspaces with normalized labels a
 
   const insidersGroup = groups.find((g) => g.key === "vscode:window-insiders");
   assert.ok(insidersGroup);
-  assert.equal(insidersGroup.badgeLabel, "Insiders");
+  assert.equal(insidersGroup.badgeLabel, "vsc-i");
   assert.equal(projectMachineBadgeToneClass(insidersGroup), "vscode-insiders");
   assert.equal(insidersGroup.label, "VS Code Insiders: codexhub [WSL: Ubuntu]");
 
   const stableGroup = groups.find((g) => g.key === "vscode:window-stable");
   assert.ok(stableGroup);
-  assert.equal(stableGroup.badgeLabel, "VS Code");
+  assert.equal(stableGroup.badgeLabel, "vsc");
   assert.equal(projectMachineBadgeToneClass(stableGroup), "vscode-stable");
   assert.equal(stableGroup.label, "VS Code: webapp");
 });

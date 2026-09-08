@@ -6,6 +6,9 @@ import type { ThreadOptions, ThreadRateLimits, ThreadUsage, Usage } from "./usag
 /** Web/API 可见的 thread 摘要，records 之外的轻量投影。 */
 export type ThreadExecutionStatus = "waiting" | "running" | "idle";
 
+/** 发起当前 thread turn 的 CodexHub 客户端来源。 */
+export type ThreadInputSource = "web" | "cli" | "telegram" | "task";
+
 /** thread 创建时实际注入的 Developer Instructions 不可变快照。 */
 export type ThreadDeveloperInstructionSnapshot = {
   templateId: string;
@@ -39,6 +42,8 @@ export type ThreadSummary = {
   activityTitle?: string;
   /** Latest compact Agent commentary/final answer for detached activity feeds. */
   latestAgentMessage?: string;
+  /** 发起当前 turn 的客户端来源；进程未知时保持缺省。 */
+  source?: ThreadInputSource;
   updatedAt: string;
   messageCount: number;
   lastUsage?: Usage;
@@ -334,7 +339,7 @@ export type ThreadQueueItem = {
   submissionId: string;
   text: string;
   imageCount: number;
-  source: "web" | "telegram" | "task";
+  source: ThreadInputSource;
   createdAt: string;
   position: number;
 };
@@ -414,7 +419,7 @@ export type SessionCommand = {
   createdAt: string;
   threadId?: string;
   input?: ProxyInput;
-  source?: "web" | "telegram" | "task";
+  source?: ThreadInputSource;
   submissionId?: string;
   turnId?: string;
   processId?: string;

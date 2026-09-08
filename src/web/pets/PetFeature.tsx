@@ -428,7 +428,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
                 <button key={activity.threadId} type="button" className="petActivityItem" onClick={() => openActivity(activity)}>
                   <span className={`petActivityDot ${activityStatusClass(activity.status)}`} />
                   <span className="petActivityText">
-                    <strong>{activity.title}</strong>
+                    <span className="petActivityTitle"><strong>{activity.title}</strong>{activity.source === "cli" ? <span className="petActivityCli" title="由 CodexHub CLI 发起" aria-label="CLI 来源">[cli]</span> : null}</span>
                     <span className="petActivityMachineRow">
                       <PetActivityMachine activity={activity} />
                       <em className={`petActivityDuration ${activity.executionMeta?.status ?? activity.status}`}>

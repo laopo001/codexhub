@@ -1,5 +1,5 @@
 import type { ProjectSource, ProjectSummary } from "../../shared/projectTypes.js";
-import { formatVscodeSurfacePrefix } from "../../shared/surfaceTypes.js";
+import { formatSourceBadgeLabel, formatVscodeChannelBadge } from "../../shared/surfaceTypes.js";
 import type { ProjectTarget, WorkspaceTarget } from "../../shared/petActivityRouting.js";
 import { asRecord, type CodexRecord } from "../../shared/recordTypes.js";
 import {
@@ -32,6 +32,7 @@ export type PetActivityMachineLabel = {
 };
 
 export type PetActivity = {
+  source?: "cli";
   threadId: string;
   title: string;
   workingDirectory: string;
@@ -229,13 +230,8 @@ const firstNonBlank = (...values: Array<string | undefined>) =>
   values.find((value) => typeof value === "string" && value.trim())?.trim();
 
 const machineTypeLabel = (type?: MachineSummary["type"], source?: ProjectSource) => {
-  if (source?.kind === "vscode") {
-    return formatVscodeSurfacePrefix(source.vscodeChannel);
-  }
-  if (source?.kind === "electron") return "Electron";
-  if (type === "registered") return "Registered";
-  if (type === "ssh") return "SSH";
-  return "Local";
+  if (source?.kind === "vscode") return formatVscodeChannelBadge(source.vscodeChannel);
+  return formatSourceBadgeLabel(source?.kind ?? type ?? "local");
 };
 
 const petMachineLabelParts = (
@@ -313,6 +309,7 @@ export const derivePetActivities = (
 
   return sortPetActivities([...candidates.values()]
     .map<PetActivity>(({ activity, detail, machine: candidateMachine, runtime, summary }) => {
+      const source = detail ? detail.source : summary ? summary.source : activity?.source;
       const machineId = detail?.runtime.machineId
         ?? summary?.runtime.machineId
         ?? runtime?.machineId
@@ -381,6 +378,7 @@ export const derivePetActivities = (
           workingDirectory,
           detail?.threadId ?? summary?.threadId ?? activity?.threadId ?? ""
         ),
+        ...(source === "cli" ? { source: "cli" as const } : {}),
         workingDirectory,
         updatedAt: detail?.updatedAt ?? summary?.updatedAt ?? activity?.updatedAt ?? runtime?.lastSeenAt ?? "",
         status,

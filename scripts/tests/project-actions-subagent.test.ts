@@ -625,3 +625,29 @@ test("cross-window sidebar opens the explicit remote target without inferring pr
   }]);
   assert.equal(fixtureState.state().activeMachineId, "machine-registered");
 });
+
+test("CodexHub CLI dialog opens the advertised machine without resuming on the parent", async () => {
+  const requests: string[] = [];
+  const f = await fixture({ fetchImpl: async (input, init) => {
+    requests.push(`${init?.method ?? "GET"} ${String(input)}`);
+    return threadResponse("machine-b", "/projects/b");
+  } });
+  await f.actions.openSubagentThread(f.childThreadId, { parentThreadId: "parent-thread", origin: "codexhub", machineId: "machine-b" });
+  assert.equal(f.state().subagentThreadDialog?.status, "ready");
+  assert.equal(f.state().subagentThreadDialog?.origin, "codexhub");
+  assert.equal(f.state().subagentThreadDialog?.machineId, "machine-b");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0], /^GET .*\/api\/threads\/child-thread$/);
+  assert.deepEqual(f.openThreadCalls, []);
+  assert.equal(f.state().activeTabThreadId, "parent-thread");
+});
+
+test("missing CLI thread never triggers inferred resume or changes the parent tab", async () => {
+  let requests = 0;
+  const f = await fixture({ fetchImpl: async () => { requests++; return threadResponse("machine-a", "/projects/a"); } });
+  await f.actions.openSubagentThread("unadvertised-id", { parentThreadId: "parent-thread", origin: "codexhub" });
+  assert.equal(requests, 0);
+  assert.equal(f.state().subagentThreadDialog?.status, "error");
+  assert.match(f.state().subagentThreadDialog?.error ?? "", /当前后端未找到/);
+  assert.equal(f.state().activeTabThreadId, "parent-thread");
+});

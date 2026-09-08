@@ -2,6 +2,7 @@ import { turnIdFromAppRecordId } from "../../shared/recordIdentity.js";
 import { asRecord } from "../../shared/recordTypes.js";
 import {
   formatVscodeChannelBadge,
+  formatSourceBadgeLabel,
   formatVscodeSurfacePrefix,
   isEmbeddedSurfaceKind
 } from "../../shared/surfaceTypes.js";
@@ -485,15 +486,16 @@ export const groupProjectsByMachine = (projects: ProjectSummary[], machines: Mac
 };
 
 export const projectMachineBadgeLabel = (group: Pick<ProjectMachineGroup, "machineType"> & { badgeLabel?: string }) => {
-  return group.badgeLabel || group.machineType;
+  return formatSourceBadgeLabel(group.badgeLabel || group.machineType);
 };
 
 export const projectMachineBadgeToneClass = (
   group: Pick<ProjectMachineGroup, "machineType" | "badgeLabel">
 ) => {
-  if (group.badgeLabel === "Insiders") return "vscode-insiders";
-  if (group.badgeLabel === "VS Code") return "vscode-stable";
-  if (group.badgeLabel === "Electron") return "electron";
+  const label = projectMachineBadgeLabel(group);
+  if (label === "vsc-i") return "vscode-insiders";
+  if (label === "vsc") return "vscode-stable";
+  if (label === "ele") return "electron";
   return group.machineType;
 };
 

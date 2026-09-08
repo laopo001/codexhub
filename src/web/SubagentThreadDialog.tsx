@@ -37,6 +37,7 @@ export const SubagentThreadDialog = ({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
   const agentName = subagentDialogAgentName(dialog.agentPath);
+  const cli = dialog.origin === "codexhub";
   const statusText = dialog.status === "loading"
     ? "Loading"
     : dialog.status === "error"
@@ -61,7 +62,7 @@ export const SubagentThreadDialog = ({
         <header className="modalHeader subagentThreadDialogHeader">
           <span className="subagentThreadDialogIcon" aria-hidden="true"><Bot size={18} strokeWidth={1.9} /></span>
           <div className="subagentThreadDialogHeading">
-            <h2 id="subagentThreadDialogTitle">Subagent · {agentName}</h2>
+            <h2 id="subagentThreadDialogTitle">{cli ? "CodexHub" : "Subagent"} · {agentName}</h2>
             <p className="subagentThreadDialogMeta">
               <span>{statusText}</span>
               {dialog.workingDirectory ? (
@@ -71,7 +72,7 @@ export const SubagentThreadDialog = ({
               ) : null}
             </p>
             <div className="subagentThreadDialogThreadId">
-              <span>Child thread</span>
+              <span>{cli ? "Thread" : "Child thread"}</span>
               <code title={`Child thread ID: ${dialog.threadId}`}>{dialog.threadId}</code>
             </div>
           </div>
@@ -83,17 +84,19 @@ export const SubagentThreadDialog = ({
           {dialog.status === "loading" ? (
             <div className="subagentThreadDialogState" role="status" aria-live="polite">
               <span className="subagentThreadDialogSpinner" aria-hidden="true" />
-              <strong>Loading subagent conversation…</strong>
+              <strong>{cli ? "正在加载 CodexHub 线程…" : "Loading subagent conversation…"}</strong>
               <span>The parent thread stays open behind this dialog.</span>
             </div>
           ) : dialog.status === "error" ? (
             <div className="subagentThreadDialogState error" role="alert">
-              <strong>Unable to load this subagent thread</strong>
+              <strong>{cli ? "无法加载 CodexHub 线程" : "Unable to load this subagent thread"}</strong>
               <span>{dialog.error}</span>
               <button
                 type="button"
                 className="secondaryButton subagentThreadDialogRetry"
                 onClick={() => void onRetry(dialog.threadId, {
+                  origin: dialog.origin,
+                  machineId: dialog.machineId,
                   parentThreadId: dialog.parentThreadId,
                   agentPath: dialog.agentPath,
                   assignment

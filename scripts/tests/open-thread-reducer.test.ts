@@ -411,3 +411,13 @@ test("conversation-only actions never create a workspace tab", async () => {
 
   assert.deepEqual(state, []);
 });
+
+test("fresh non-CLI summaries clear a previous CLI source instead of retaining a stale badge", async () => {
+  const reducer = await loadReducer();
+  let state = reducer([], { type: "upsert-detail", thread: { ...detail("thread-1"), source: "cli" } });
+  state = reducer(state, { type: "merge-stream", threadId: "thread-1", thread: { ...detail("thread-1"), source: "web" } });
+  assert.equal(state[0].source, "web");
+  state = reducer(state, { type: "merge-stream", threadId: "thread-1", thread: { ...detail("thread-1"), source: "cli" } });
+  state = reducer(state, { type: "merge-stream", threadId: "thread-1", thread: detail("thread-1") });
+  assert.equal(state[0].source, undefined);
+});

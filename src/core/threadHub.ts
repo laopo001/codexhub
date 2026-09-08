@@ -97,6 +97,7 @@ import type {
   ThreadBackgroundTerminals,
   ThreadDetail,
   ThreadHistoryPageInfo,
+  ThreadInputSource,
   ThreadQueueItem,
   ThreadGoalUpdate,
   ThreadRunOptions,
@@ -640,6 +641,7 @@ export class ThreadHub {
       latestAgentMessage: summary.latestAgentMessage,
       messageCount: summary.messageCount
     };
+    thread.source = summary.source;
   }
 
   private acceptRemoteProjectionSeq(sessionId: string, generation: string, relaySeq: number) {
@@ -1701,7 +1703,7 @@ export class ThreadHub {
     }
   }
 
-  runLocalCommand(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web") {
+  runLocalCommand(threadId: string, input: ProxyInput, _source: ThreadInputSource = "web") {
     const parsed = parseLocalSlashCommand(input);
     if (!parsed) return { handled: false };
 
@@ -1763,14 +1765,14 @@ export class ThreadHub {
     return { title };
   }
 
-  runTurn(threadId: string, input: ProxyInput, _source: "web" | "telegram" | "task" = "web", options?: ThreadRunOptions) {
+  runTurn(threadId: string, input: ProxyInput, _source: ThreadInputSource = "web", options?: ThreadRunOptions) {
     return this.runTurnWithDelivery(threadId, input, _source, options).completion;
   }
 
   runTurnWithDelivery(
     threadId: string,
     input: ProxyInput,
-    _source: "web" | "telegram" | "task" = "web",
+    _source: ThreadInputSource = "web",
     options?: ThreadRunOptions,
     requestedSubmissionId?: string
   ): ThreadTurnDispatch {
@@ -1811,15 +1813,15 @@ export class ThreadHub {
     }
     const submissionId = requestedSubmissionId?.trim() || randomUUID();
     const submissionCreatedAt = new Date().toISOString();
-    if (thread.running && _source === "web" && options?.goalMode) {
+    if (thread.running && (_source === "web" || _source === "cli") && options?.goalMode) {
       return turnDispatch(submissionId, "goal", () => this.setThreadGoal(thread, goalUpdateFromInput(input, options)));
     }
-    if (thread.running && _source === "web" && thread.appServerTurnId) {
+    if (thread.running && (_source === "web" || _source === "cli") && thread.appServerTurnId) {
       const targetTurnId = thread.appServerTurnId;
       const dispatch = turnDispatch(
         submissionId,
         "steer",
-        () => this.steerTurn(thread, input, targetTurnId, options, submissionId, submissionCreatedAt),
+        () => this.steerTurn(thread, input, targetTurnId, _source, options, submissionId, submissionCreatedAt),
         (error) => this.appendSubmissionFailedRecord(thread, input, error)
       );
       return {
@@ -1846,7 +1848,7 @@ export class ThreadHub {
   private startTurn(
     thread: ThreadState,
     input: ProxyInput,
-    _source: "web" | "telegram" | "task" = "web",
+    _source: ThreadInputSource = "web",
     options?: ThreadRunOptions
   ) {
     if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
@@ -1875,6 +1877,7 @@ export class ThreadHub {
     const userTitle = compactThreadTitle(userText);
     if (userTitle && thread.title === thread.threadId) thread.title = userTitle;
     const startedAt = new Date().toISOString();
+    thread.source = _source;
     thread.running = true;
     thread.executionStatus = "waiting";
     thread.appServerTurnId = undefined;
@@ -1888,6 +1891,7 @@ export class ThreadHub {
       createdAt: startedAt,
       input,
       threadId: thread.threadId,
+      source: _source,
       options: commandOptions
     });
     return promise;
@@ -1897,6 +1901,7 @@ export class ThreadHub {
     thread: ThreadState,
     input: ProxyInput,
     turnId: string,
+    source: ThreadInputSource,
     options: ThreadRunOptions | undefined,
     submissionId: string,
     submissionCreatedAt: string
@@ -1908,6 +1913,7 @@ export class ThreadHub {
     if (pending) {
       pending.input = input;
       pending.turnOptions = options ? { ...options } : undefined;
+      pending.source = source;
       pending.submissionId = submissionId;
       pending.submissionCreatedAt = submissionCreatedAt;
     }
@@ -1918,7 +1924,8 @@ export class ThreadHub {
       createdAt: new Date().toISOString(),
       input,
       threadId: thread.threadId,
-      turnId
+      turnId,
+      source
     });
     return promise;
   }
@@ -1936,12 +1943,12 @@ export class ThreadHub {
         ? this.queueTurn(
           thread,
           pending.input!,
-          "web",
+          pending.source ?? "web",
           pending.turnOptions,
           pending.submissionId ?? randomUUID(),
           pending.submissionCreatedAt ?? new Date().toISOString()
         )
-        : this.startTurn(thread, pending.input!, "web", pending.turnOptions);
+        : this.startTurn(thread, pending.input!, pending.source ?? "web", pending.turnOptions);
     } catch (error) {
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       this.appendSubmissionFailedRecord(thread, pending.input, normalizedError);
@@ -2013,7 +2020,7 @@ export class ThreadHub {
   private queueTurn(
     thread: ThreadState,
     input: ProxyInput,
-    source: "web" | "telegram" | "task",
+    source: ThreadInputSource,
     options: ThreadRunOptions | undefined,
     submissionId: string,
     createdAt: string
@@ -3832,6 +3839,7 @@ export class ThreadHub {
       title: thread.title,
       ...(activityTitle ? { activityTitle } : {}),
       ...(latestAgentMessage ? { latestAgentMessage } : {}),
+      ...(thread.source ? { source: thread.source } : {}),
       updatedAt: thread.updatedAt,
       messageCount: thread.remoteSummary?.messageCount ?? this.threadRecordIndex(thread).messageCount,
       lastUsage: thread.lastUsage,

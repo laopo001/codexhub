@@ -656,3 +656,7 @@
     animation: none !important;
   }
 }
+
+.petActivityTitle { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.petActivityTitle strong { flex: 1; min-width: 0; }
+.petActivityCli { flex: none; color: #7350a2; background: #eee6f7; border: 1px solid #d8c7eb; border-radius: 4px; padding: 0 4px; font: 600 10px/1.5 ui-monospace, monospace; }

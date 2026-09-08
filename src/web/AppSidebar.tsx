@@ -24,6 +24,7 @@ import {
   machineProjectLauncher,
   projectKeyForProject,
   projectMachineBadgeToneClass,
+  projectMachineBadgeLabel,
   shortId,
   threadDisplayTitle,
   uniqueMachines
@@ -127,7 +128,7 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
           </span>
           <span className={`projectMachineStatusDot ${machine.online ? "online" : "offline"}`} aria-hidden="true" />
           <span className="projectMachineName" title={machine.label}>{machine.label}</span>
-          <strong className={`projectMachineBadge ${projectMachineBadgeToneClass(machine)}`}>{machine.badgeLabel}</strong>
+          <strong className={`projectMachineBadge ${projectMachineBadgeToneClass(machine)}`}>{projectMachineBadgeLabel(machine)}</strong>
         </button>
         {!collapsed ? (
           <div className="projectMachineRows">

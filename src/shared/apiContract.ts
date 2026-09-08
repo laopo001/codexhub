@@ -54,6 +54,8 @@ import type {
   ,PluginReconcileResult
 } from "./threadTypes.js";
 
+export const threadInputSourceSchema = z.enum(["web", "cli", "telegram", "task"]);
+
 export type {
   MachineDirectoryListing,
   MachineFileChunkResult,
@@ -801,6 +803,7 @@ const threadProjectionSummarySchema = z.object({
   title: z.string(),
   activityTitle: z.string().optional(),
   latestAgentMessage: z.string().optional(),
+  source: threadInputSourceSchema.optional(),
   updatedAt: z.string().min(1),
   messageCount: z.number().int().nonnegative(),
   lastUsage: z.unknown().optional(),
@@ -948,6 +951,7 @@ const machineActivitySummarySchema = z.object({
     totalSteps: z.number().int().positive()
   }).strict().optional(),
   latestAgentMessage: z.string().trim().min(1).max(160).optional(),
+  source: threadInputSourceSchema.optional(),
   workingDirectory: z.string().min(1),
   updatedAt: z.string().min(1),
   status: z.enum(["needs_input", "blocked", "running", "idle"])
@@ -1111,7 +1115,7 @@ export const remoteBackendCommandSchema = z.object({
   createdAt: z.string().min(1),
   threadId: z.string().min(1).optional(),
   input: inputSchema.optional(),
-  source: z.enum(["web", "telegram", "task"]).optional(),
+  source: threadInputSourceSchema.optional(),
   submissionId: z.string().min(1).optional(),
   turnId: z.string().min(1).optional(),
   processId: z.string().min(1).optional(),

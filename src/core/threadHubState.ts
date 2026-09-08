@@ -6,6 +6,7 @@ import type {
   SessionRegistration,
   SessionSummary,
   ThreadBackgroundTerminals,
+  ThreadInputSource,
   ThreadQueueItem,
   ThreadRunOptions,
   ThreadSummary,
@@ -39,6 +40,7 @@ export type ThreadState = {
   running: boolean;
   executionStatus: "waiting" | "running" | "idle";
   title: string;
+  source?: ThreadInputSource;
   updatedAt: string;
   records: CodexRecord[];
   backgroundTerminals: ThreadBackgroundTerminals;
@@ -57,6 +59,7 @@ export type PendingCommand = {
   keepTurns?: number;
   input?: ProxyInput;
   turnOptions?: ThreadRunOptions;
+  source?: ThreadInputSource;
   submissionId?: string;
   submissionCreatedAt?: string;
   knownAppServerTurnIds?: Set<string>;

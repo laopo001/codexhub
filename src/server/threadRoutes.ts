@@ -12,6 +12,7 @@ import {
   threadGoalUpdateSchema,
   threadRenameSchema,
   threadRunOptionsSchema,
+  threadInputSourceSchema,
   threadUserInputResponseSchema,
   threadHistoryQuerySchema,
   webEventsMessageSchema,
@@ -494,7 +495,7 @@ export const registerThreadRoutes = <
     const payload = z.object({
       submissionId: z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9:_-]+$/).optional(),
       input: inputSchema,
-      source: z.enum(["web", "telegram", "task"]).optional(),
+      source: threadInputSourceSchema.optional(),
       options: threadRunOptionsSchema.optional()
     }).parse(request.body);
 

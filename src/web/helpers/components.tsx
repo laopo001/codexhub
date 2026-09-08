@@ -113,7 +113,7 @@ export const MessageCard = ({
   const isSleepMessage = asRecord(message.record.payload)?.type === "sleep";
   const isToolBatch = Boolean(message.toolBatch);
   const messageToneClass = messageToneClassName(message);
-  const toolBody = !isToolBatch && renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined) : null;
+  const toolBody = !isToolBatch && renderToolPreview ? renderToolMessageBody(message, showStatus ? message.status : undefined, showStatus ? message.statusText : undefined, threadId) : null;
   const hasToolBody = toolBody !== null;
   const memoryCitation = useMemo(() => {
     if (isThinkingMessage) return emptyMemoryCitation("");

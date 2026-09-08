@@ -299,9 +299,9 @@ test("pet activities include running threads from registered runtimes", () => {
     threadId: "wsl-thread",
     status: "running",
     machineId: "machine-wsl",
-    machineLabel: "Registered · codexhub · WSL Ubuntu · jx",
+    machineLabel: "reg · codexhub · WSL Ubuntu · jx",
     machineLabelParts: {
-      type: "Registered",
+      type: "reg",
       directoryName: "codexhub",
       machineContext: "WSL Ubuntu · jx"
     }
@@ -425,9 +425,9 @@ test("machine-only pet activities expose the registered turn start and Agent mes
     status: "running",
     machineId: "machine-activity-only",
     machineHostname: "remote",
-    machineLabel: "Registered · codexhub · Remote authority",
+    machineLabel: "reg · codexhub · Remote authority",
     machineLabelParts: {
-      type: "Registered",
+      type: "reg",
       directoryName: "codexhub",
       machineContext: "Remote authority"
     },
@@ -679,9 +679,9 @@ test("derivePetActivities routes explicit project origin to its workspace", () =
     label: "VSCode: codexhub [WSL: Ubuntu]",
     vscodeChannel: "insiders"
   });
-  assert.equal(activities[0]?.machineLabelParts?.type, "VS Code Insiders");
+  assert.equal(activities[0]?.machineLabelParts?.type, "vsc-i");
   assert.equal(activities[0]?.machineLabelParts?.directoryName, "web");
-  assert.equal(activities[0]?.machineLabel, "VS Code Insiders · web");
+  assert.equal(activities[0]?.machineLabel, "vsc-i · web");
 });
 
 test("derivePetActivities leaves a thread without explicit origin unresolved", () => {
@@ -711,4 +711,40 @@ test("PetFeature openActivity retains tray expansion without closing it and has 
     !openActivityMatch[1].includes("focusMainWindow"),
     "openActivity must NOT contain any legacy focusMainWindow fallback"
   );
+});
+
+test("pet activity labels only explicit CLI sources and does not infer from names or projects", () => {
+  const cli = { ...thread("thread-1", [], true), source: "cli" as const };
+  const web = { ...thread("thread-2", [], true), source: "web" as const };
+  const unknown = { ...thread("thread-3", [], true), title: "CLI task" };
+  const rows = derivePetActivities([cli, web, unknown]);
+  assert.deepEqual(rows.map(row => row.source), ["cli", undefined, undefined]);
+});
+
+test("detached desktop feed preserves CLI source from runtime and registered activity snapshots", () => {
+  const runtime: RuntimeSummary = { machineId: "session-1", online: true, status: "online", workingDirectory: "/tmp", lastSeenAt: "2026-01-01T00:00:00Z", threads: [{ ...thread("thread-1", [], true), source: "cli" }] };
+  const machine: MachineSummary = { machineId: "registered", type: "registered", hostname: "remote-host", capabilities: { projectLauncher: false }, online: true, status: "online", lastSeenAt: runtime.lastSeenAt, activities: [{ threadId: "remote-cli", title: "Remote", source: "cli", workingDirectory: "/remote", updatedAt: runtime.lastSeenAt, status: "running" }] };
+  assert.equal(derivePetActivities([], [runtime])[0]?.source, "cli");
+  assert.equal(derivePetActivities([], [], [machine])[0]?.source, "cli");
+  assert.equal(derivePetActivities([{ ...thread("thread-1", [], true), source: "web" }], [runtime])[0]?.source, undefined);
+});
+
+test("pet activity markup adds only a CLI badge while preserving state indicators", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PetOverlay } = await import("../../src/web/pets/PetFeature.js");
+  const activities = derivePetActivities([{ ...thread("thread-1", [], true), source: "cli" }, { ...thread("thread-2", [], true), source: "web" }]);
+  const controller = { enabled: true, selectedPet: builtinPet, status: "running", activities, trayOpen: true, completionPhase: "none", position: { x: 100, y: 300 }, setTrayOpen: () => {}, setPosition: () => {}, openPicker: () => {} } as unknown as Parameters<typeof PetOverlay>[0]["controller"];
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { innerWidth: 800, innerHeight: 600, location: { search: "" }, matchMedia: () => ({ matches: true }) } });
+  let html: string;
+  try {
+    html = renderToStaticMarkup(createElement(PetOverlay, { controller, composerRecentlyChanged: false, onOpenThread: () => {} }));
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+  assert.equal((html.match(/\[cli\]/g) ?? []).length, 1);
+  assert.equal((html.match(/petActivityDot running/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /\[web\]/);
 });

@@ -1,5 +1,6 @@
 import type { PlanProgressSummary } from "./planProgress.js";
 import type { VscodeChannel } from "./surfaceTypes.js";
+import type { ThreadInputSource } from "./threadTypes.js";
 
 /** 机器来源类型；表示执行路径解析和 Codex runtime 启动的机器边界。 */
 export type MachineType = "local" | "ssh" | "registered";
@@ -47,6 +48,8 @@ export type MachineActivitySummary = {
   activePlanProgress?: PlanProgressSummary;
   /** Latest compact Agent commentary/final answer for activity-only consumers. */
   latestAgentMessage?: string;
+  /** 发起当前 turn 的客户端来源；进程未知时保持缺省。 */
+  source?: ThreadInputSource;
   workingDirectory: string;
   updatedAt: string;
   status: MachineActivityStatus;

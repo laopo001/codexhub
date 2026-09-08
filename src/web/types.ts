@@ -186,6 +186,7 @@ export type PendingUserMessage = {
 };
 
 export type SubagentThreadDialogState = {
+  origin?: "codexhub";
   threadId: string;
   parentThreadId: string;
   /**
@@ -204,6 +205,8 @@ export type SubagentThreadDialogState = {
 };
 
 export type SubagentThreadOpenOptions = {
+  origin?: "codexhub";
+  machineId?: string;
   parentThreadId?: string;
   agentPath?: string;
   assignment?: SubagentActivityView["assignment"];
