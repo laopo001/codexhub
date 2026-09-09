@@ -80,6 +80,27 @@ test("parses an app-server serialized single-element shell command with heredoc 
   });
 });
 
+test("parses a serialized send heredoc and keeps the body as the latest instruction", () => {
+  const command = [
+    `/usr/bin/zsh -lc "codexhub send ${threadId} - <<'TASK'`,
+    "latest instruction from the parent thread",
+    "TASK\""
+  ].join("\n");
+
+  assert.deepEqual(invocation(parseCodexhubInvocation([command])), {
+    operation: "send",
+    threadId,
+    input: "latest instruction from the parent thread"
+  });
+
+  const nonStdinInput = [
+    `/usr/bin/zsh -lc "codexhub send ${threadId} literal <<'TASK'`,
+    "must not be accepted as send input",
+    "TASK\""
+  ].join("\n");
+  assert.equal(parseCodexhubInvocation([nonStdinInput]), null);
+});
+
 test("parses send, stop, and end IDs only from their position arguments", () => {
   assert.deepEqual(invocation(parseCodexhubInvocation(`cxh send --model=gpt-5 ${threadId} "continue this" --no-wait`)), {
     operation: "send",
@@ -139,6 +160,12 @@ test("rejects unsafe commands in a serialized single-element shell array", () =>
   assert.equal(parseCodexhubInvocation(["/usr/bin/zsh -lc \"echo 'codexhub start --name fake input'\""]), null);
   assert.equal(parseCodexhubInvocation(["/usr/bin/zsh -lc \"codexhub send $THREAD_ID 'input'\""]), null);
   assert.equal(parseCodexhubInvocation(["/usr/bin/zsh -lc \"codexhub start --name x input && echo done\""]), null);
+  assert.equal(parseCodexhubInvocation([[
+    `/usr/bin/zsh -lc "kill -TERM 123`,
+    `codexhub send ${threadId} - <<'TASK'`,
+    "should not be parsed",
+    "TASK\""
+  ].join("\n")]), null);
 });
 
 test("very large or deeply nested shell wrappers remain ordinary shell previews", () => {

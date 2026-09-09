@@ -84,6 +84,41 @@ test("task aggregation deduplicates starts, updates from send, retains idle rows
   assert.equal(state.tasks.find(task => task.threadId === first)?.message, "latest send", "an older send must not revert the latest message");
 });
 
+test("real single-element zsh records update the row through multiple sends and survive history narrowing", () => {
+  const threadId = "01a0803a-5615-7d80-98f4-68d74f89185b";
+  const serialized = (operation: "start" | "send", input: string, recordId: string) => {
+    const command = operation === "start"
+      ? [
+          `/usr/bin/zsh -lc "codexhub start - --name 'real record' <<'TASK'`,
+          input,
+          "TASK\""
+        ].join("\n")
+      : [
+          `/usr/bin/zsh -lc "codexhub send ${threadId} - <<'TASK'`,
+          input,
+          "TASK\""
+        ].join("\n");
+    return record(recordId, command, operation === "start" ? `Thread ID: ${threadId}` : `accepted ${recordId}`);
+  };
+  const initial = serialized("start", "start instruction", "real-start");
+  const firstSend = serialized("send", "first latest instruction", "real-send-1");
+  const secondSend = serialized("send", "second latest instruction", "real-send-2");
+  const compound = record(
+    "real-compound",
+    `kill -TERM 123\ncodexhub send ${threadId} - <<'TASK'\nunsafe\nTASK`,
+    "should be ignored"
+  );
+
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [initial]);
+  assert.equal(state.tasks[0]?.message, "start instruction");
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, firstSend, compound]);
+  assert.equal(state.tasks[0]?.message, "first latest instruction");
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, firstSend, secondSend, compound]);
+  assert.equal(state.tasks[0]?.message, "second latest instruction");
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, firstSend, compound]);
+  assert.equal(state.tasks[0]?.message, "second latest instruction", "an older send must not win after history narrows");
+});
+
 test("stop and unconfirmed end do not replace the latest send message", () => {
   const threadId = "01a0803a-5615-7d80-98f4-68d74f89185b";
   const initial = start("start", "A", threadId);

@@ -172,9 +172,9 @@ function parseInvocationArguments(args: string[], heredocInput?: string): Codexh
     return optionalInvocation(operation, { name, cwd, machineId, model, effort, connectUrl, input: positionals[0] });
   }
 
-  if (sawHeredoc) return null;
   if (operation === "send") {
     if (positionals.length !== 2 || !UUID_PATTERN.test(positionals[0])) return null;
+    if (sawHeredoc && positionals[1] !== "-") return null;
     return optionalInvocation(operation, {
       threadId: positionals[0],
       cwd,
@@ -182,10 +182,11 @@ function parseInvocationArguments(args: string[], heredocInput?: string): Codexh
       model,
       effort,
       connectUrl,
-      input: positionals[1]
+      input: sawHeredoc ? heredocInput : positionals[1]
     });
   }
 
+  if (sawHeredoc) return null;
   if (positionals.length !== 1 || !UUID_PATTERN.test(positionals[0])) return null;
   return optionalInvocation(operation, { threadId: positionals[0], connectUrl });
 }
