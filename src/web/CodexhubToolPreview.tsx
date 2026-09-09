@@ -101,6 +101,7 @@ export const CodexhubToolProvider = ({ activeThreadId, runtimes, threads, onOpen
 
 export const CodexhubToolPreview = ({ call, onInspect }: { call: CodexhubToolCall; onInspect?: () => void }) => {
   const context = React.useContext(Context);
+  const [collapsed, setCollapsed] = React.useState(false);
   const target = codexhubAttachedThread(call.threadId, context?.runtimes ?? [], call.invocation.machineId);
   const canOpen = Boolean(context && target?.runtime.online && call.threadId !== call.parentThreadId);
   const status = call.lastOperation === "end"
@@ -109,10 +110,12 @@ export const CodexhubToolPreview = ({ call, onInspect }: { call: CodexhubToolCal
       : call.status === "failed" ? "调用失败" : call.threadId ? "当前后端未找到线程" : call.status === "completed" ? "未获取 Thread ID" : "等待 Thread ID";
   const taskName = call.invocation.name ?? target?.thread.title ?? `CodexHub ${call.invocation.operation}`;
   return <section className="codexhubTaskPreview" aria-label="CodexHub 调用">
-    <div className="codexhubTaskHeading"><Bot size={17} /><strong title={taskName}>{taskName}</strong>
+    <div className="codexhubTaskHeading"><Bot size={17} /><button type="button" className="codexhubTaskName" title={taskName}
+      aria-expanded={!collapsed} onClick={event => { event.stopPropagation(); setCollapsed(value => !value); }}><strong>{taskName}</strong></button>
       <span className={target?.thread.running ? "running" : ""}>{status}</span>
       {onInspect ? <button type="button" className="iconButton" aria-label="查看原始工具详情" onClick={event => { event.stopPropagation(); onInspect(); }}><Info size={14} /></button> : null}
       {context ? <button type="button" className="iconButton codexhubTaskOpen" aria-label="查看完整线程" title="查看完整线程" disabled={!canOpen} onClick={event => { event.stopPropagation(); context.open(call); }}><ExternalLink size={13} /><span>查看</span></button> : null}
     </div>
+    {!collapsed && call.message !== undefined ? <p className="codexhubTaskMessage">{call.message}</p> : null}
   </section>;
 };

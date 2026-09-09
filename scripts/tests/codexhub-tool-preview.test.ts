@@ -56,8 +56,10 @@ const record = (id: string, command: string, output: string, status: "in_progres
 
 const start = (id: string, name: string, threadId: string, output = `Thread ID: ${threadId}`) =>
   record(id, `codexhub start 'start ${name}' --name '${name}'`, output);
-const send = (id: string, threadId: string, output: string) =>
-  record(id, `codexhub send ${threadId} 'follow up'`, output);
+const send = (id: string, threadId: string, output: string, input = "follow up") =>
+  record(id, `codexhub send ${threadId} '${input}'`, output);
+const stop = (id: string, threadId: string, output = "stopped") =>
+  record(id, `codexhub stop ${threadId}`, output);
 const end = (id: string, threadId: string, output: string, status: "in_progress" | "completed" = "completed") =>
   record(id, `codexhub end ${threadId}`, output, status);
 
@@ -68,13 +70,34 @@ test("task aggregation deduplicates starts, updates from send, retains idle rows
   const initialRecords = [start("start-a", "A", first), start("start-a-duplicate", "A duplicate", first), start("start-b", "B", second), send("send-unrelated", unrelated, "ignored")];
   let state = aggregateCodexhubToolTasks(undefined, "parent", initialRecords);
   assert.deepEqual(state.tasks.map(task => task.invocation.name), ["A", "B"]);
+  assert.equal(state.tasks.find(task => task.threadId === first)?.message, "start A");
 
-  state = aggregateCodexhubToolTasks(state, "parent", [...initialRecords, send("send-a", first, "updated by send")]);
+  const oldSend = send("send-a-old", first, "updated by old send", "old send");
+  const latestSend = send("send-a-latest", first, "updated by send", "latest send");
+  state = aggregateCodexhubToolTasks(state, "parent", [...initialRecords, oldSend, latestSend]);
   assert.equal(state.tasks.length, 2);
   assert.equal(state.tasks.find(task => task.threadId === first)?.output, "updated by send");
+  assert.equal(state.tasks.find(task => task.threadId === first)?.message, "latest send");
 
-  state = aggregateCodexhubToolTasks(state, "parent", []);
+  state = aggregateCodexhubToolTasks(state, "parent", [...initialRecords, oldSend]);
   assert.equal(state.tasks.length, 2, "a narrower history window must not remove an idle task");
+  assert.equal(state.tasks.find(task => task.threadId === first)?.message, "latest send", "an older send must not revert the latest message");
+});
+
+test("stop and unconfirmed end do not replace the latest send message", () => {
+  const threadId = "01a0803a-5615-7d80-98f4-68d74f89185b";
+  const initial = start("start", "A", threadId);
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [initial, send("send", threadId, "sent", "keep this message")]);
+  state = aggregateCodexhubToolTasks(state, "parent", [
+    initial,
+    send("send", threadId, "sent", "keep this message"),
+    stop("stop", threadId),
+    end("end", threadId, "end was not confirmed")
+  ]);
+  assert.equal(state.tasks[0]?.invocation.name, "A");
+  assert.equal(state.tasks[0]?.message, "keep this message");
+  assert.equal(state.tasks[0]?.lastOperation, "end");
+  assert.equal(state.tasks[0]?.status, "completed");
 });
 
 test("failed or unconfirmed end retains the task, while an exact successful receipt tombstones it", () => {

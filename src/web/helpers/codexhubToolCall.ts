@@ -9,6 +9,8 @@ export type CodexhubToolCall = {
   recordId: string;
   invocation: CodexhubInvocation;
   threadId?: string;
+  message?: string;
+  messageRecordId?: string;
   output: string;
   status?: WebRecordView["status"];
   lastOperation?: CodexhubInvocation["operation"];
@@ -18,6 +20,7 @@ export type CodexhubToolTaskState = {
   parentThreadId: string;
   tasks: CodexhubToolCall[];
   endedThreadIds: ReadonlySet<string>;
+  observedSendRecordIds: ReadonlySet<string>;
 };
 
 export const codexhubToolCallFromMessage = (message: WebRecordView, parentThreadId: string): CodexhubToolCall | null => {
@@ -32,7 +35,9 @@ export const codexhubToolCallFromMessage = (message: WebRecordView, parentThread
   const output = typeof payload.aggregated_output === "string" ? payload.aggregated_output
     : message.inspectText ?? (typeof asRecord(message.inspectRecord?.payload)?.output === "string" ? String(asRecord(message.inspectRecord?.payload)?.output) : "");
   return { parentThreadId, recordId: message.record.id, invocation,
-    threadId: invocation.threadId ?? codexhubThreadIdFromOutput(output), output, status: message.status,
+    threadId: invocation.threadId ?? codexhubThreadIdFromOutput(output), message: invocation.input,
+    messageRecordId: invocation.operation === "send" ? message.record.id : undefined,
+    output, status: message.status,
     lastOperation: invocation.operation };
 };
 
@@ -97,7 +102,8 @@ export const codexhubEndReceiptMatches = (call: CodexhubToolCall): boolean => {
 const emptyTaskState = (parentThreadId: string): CodexhubToolTaskState => ({
   parentThreadId,
   tasks: [],
-  endedThreadIds: new Set<string>()
+  endedThreadIds: new Set<string>(),
+  observedSendRecordIds: new Set<string>()
 });
 
 /**
@@ -114,10 +120,16 @@ export const aggregateCodexhubToolTasks = (
   const prior = previous?.parentThreadId === parentThreadId ? previous : emptyTaskState(parentThreadId);
   const nextTasks = new Map(prior.tasks.map(task => [taskKey(task), task]));
   const endedThreadIds = new Set(prior.endedThreadIds);
+  const previouslyObservedSendRecordIds = prior.observedSendRecordIds;
+  const observedSendRecordIds = new Set(previouslyObservedSendRecordIds);
   const views = recordsToViews([...records]);
   const currentCalls = views.map(view => codexhubToolCallFromMessage(view, parentThreadId))
     .filter((call): call is CodexhubToolCall => call !== null)
     .map(call => refreshCodexhubToolCall(call, records));
+
+  for (const call of currentCalls) {
+    if (call.invocation.operation === "send") observedSendRecordIds.add(call.recordId);
+  }
 
   for (const call of currentCalls) {
     if (call.invocation.operation === "end" && codexhubEndReceiptMatches(call) && call.invocation.threadId) {
@@ -148,7 +160,13 @@ export const aggregateCodexhubToolTasks = (
       const existing = nextTasks.get(existingKey)!;
       if (existing.recordId === call.recordId) {
         nextTasks.delete(existingKey);
-        nextTasks.set(taskKey(call), { ...existing, ...call, threadId: call.threadId ?? existing.threadId });
+        nextTasks.set(taskKey(call), {
+          ...existing,
+          ...call,
+          threadId: call.threadId ?? existing.threadId,
+          message: existing.message ?? call.message,
+          messageRecordId: existing.messageRecordId ?? call.messageRecordId
+        });
       }
       continue;
     }
@@ -158,16 +176,26 @@ export const aggregateCodexhubToolTasks = (
   for (const [key, task] of nextTasks) {
     if (!task.threadId || endedThreadIds.has(task.threadId)) continue;
     const related = currentCalls.filter(call => call.invocation.operation !== "start" && call.threadId === task.threadId).at(-1);
+    const latestSend = currentCalls.filter(call => call.invocation.operation === "send"
+      && call.threadId === task.threadId
+      && typeof call.invocation.input === "string").at(-1);
     if (!related) continue;
+    const messageUpdate = latestSend
+      && (!task.messageRecordId
+        || latestSend.recordId === task.messageRecordId
+        || !previouslyObservedSendRecordIds.has(latestSend.recordId))
+      ? { message: latestSend.invocation.input, messageRecordId: latestSend.recordId }
+      : {};
     nextTasks.set(key, {
       ...task,
       output: related.output || task.output,
       status: related.status ?? task.status,
-      lastOperation: related.invocation.operation
+      lastOperation: related.invocation.operation,
+      ...messageUpdate
     });
   }
 
-  return { parentThreadId, tasks: [...nextTasks.values()], endedThreadIds };
+  return { parentThreadId, tasks: [...nextTasks.values()], endedThreadIds, observedSendRecordIds };
 };
 
 // Only an attached thread advertised by this backend is eligible. Never resume

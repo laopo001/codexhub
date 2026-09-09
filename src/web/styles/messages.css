@@ -2293,10 +2293,13 @@
 /* CodexHub shell invocation preview; full transcript uses the shared dialog. */
 .codexhubTaskPreview { min-width: 0; display: grid; gap: 6px; padding: 9px 10px; border: 1px solid #cbd6c7; border-radius: 12px; background: #fcfdf9; color: #17211a; }
 .codexhubTaskHeading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.codexhubTaskName { display: flex; flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.codexhubTaskName:focus-visible { outline: 2px solid #35624a; outline-offset: 2px; border-radius: 2px; }
 .codexhubTaskHeading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 13px; }
 .codexhubTaskHeading > span { font-size: 11px; color: #607062; }
 .codexhubTaskHeading > span.running { color: #207347; }
 .codexhubTaskHeading .codexhubTaskOpen { display: inline-flex; flex: 0 0 auto; width: auto; min-height: 24px; gap: 4px; align-items: center; padding: 2px 4px; color: #35624a; font-size: 11px; }
+.codexhubTaskMessage { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; margin: 0; color: #526257; font-size: 11px; line-height: 1.35; min-width: 0; white-space: pre-line; }
 .codexhubFloatingTask { position: fixed; width: min(360px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; z-index: 90; border: 1px solid #cbd6c7; background: #fcfdf9; border-radius: 13px; box-shadow: 0 12px 44px rgb(18 32 24 / 0.22); }
 .codexhubFloatingHandle { display: flex; gap: 6px; align-items: center; padding: 7px 9px; cursor: grab; touch-action: none; user-select: none; font-size: 11px; color: #607062; }
 .codexhubFloatingHandle > span { flex: 1; }
