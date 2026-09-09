@@ -23,12 +23,12 @@ cp .env.example .env
 pnpm dev
 ```
 
-`pnpm dev` 会同时启动 API 和 Vite Web 开发服务器：
+`pnpm dev` 会同时启动 API 和 Vite Web 开发服务器；`pnpm run dev:api` 只启动 API，`pnpm run dev:web` 只启动 Web：
 
 - Web: `http://127.0.0.1:15173`
 - API: `http://127.0.0.1:18788`
 
-Vite 会把 `/api` 代理到开发 API。需要单独启动时使用 `pnpm run dev:api` 或 `pnpm run dev:web`。
+Vite 会把 `/api` 代理到开发 API。开发 API 由现有 `scripts/dev.ts` 启动器直接拉起，使用仓库内被 Git 忽略的绝对数据目录 `<repo>/tmp/dev-api`，因此不会和日常 authority 的 `~/.config/codexhub` 共享 `authority-id`、`config.yaml` 或 parent registration 配置；用户在 shell 或 `.env` 中显式设置的 `CODEX_HUB_REGISTER_TO` 等环境变量仍按正常优先级生效。
 
 ## 生产/本地 server
 

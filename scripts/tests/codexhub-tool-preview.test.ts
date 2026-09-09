@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { recordsToViews } from "../../src/core/codexRecordView.js";
-import { aggregateCodexhubToolTasks, codexhubToolCallFromMessage, refreshCodexhubToolCall, codexhubAttachedThread } from "../../src/web/helpers/codexhubToolCall.js";
+import {
+  aggregateCodexhubToolTasks,
+  codexhubAttachedThread,
+  codexhubEndReceiptMatches,
+  codexhubStopReceipt,
+  codexhubToolCallFromMessage,
+  refreshCodexhubToolCall
+} from "../../src/web/helpers/codexhubToolCall.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import type { RuntimeSummary, WebRecordView } from "../../src/web/types.js";
 
@@ -163,6 +170,160 @@ test("a failed start without a child ID does not leave a permanent placeholder",
   const failedView = recordsToViews([{ ...failed, payload: { ...(failed.payload as Record<string, unknown>), status: "failed" } }]);
   const state = aggregateCodexhubToolTasks(undefined, "parent", [failedView[0].record]);
   assert.equal(state.tasks.length, 0);
+});
+
+test("CodexHub shell boundary maps nonzero exits to failed and -1 to terminated", () => {
+  const operations = [
+    ["start", start("exit-start", "A", childId)],
+    ["send", send("exit-send", childId, "send output")],
+    ["stop", stop("exit-stop", childId, "stop output")],
+    ["end", end("exit-end", childId, "end output")]
+  ] as const;
+  for (const [, base] of operations) {
+    const failedRecord = {
+      ...base,
+      payload: { ...(base.payload as Record<string, unknown>), exit_code: 1 }
+    };
+    const terminatedRecord = {
+      ...base,
+      payload: { ...(base.payload as Record<string, unknown>), exit_code: -1 }
+    };
+    assert.equal(codexhubToolCallFromMessage(recordsToViews([failedRecord])[0], "parent")?.status, "failed");
+    assert.equal(codexhubToolCallFromMessage(recordsToViews([terminatedRecord])[0], "parent")?.status, "terminated");
+  }
+});
+
+test("stop receipts require the exact target and accept text or the control JSON shape", () => {
+  const stoppedText = "Stopped thread " + childId + "; canonical running=false.";
+  const idleText = "Thread " + childId + " was already idle; canonical running=false.";
+  const json = JSON.stringify({ operation: "stop", threadId: childId, stopped: false, running: false, idle: true });
+  const makeCall = (output: string, status: "pending" | "in_progress" | "completed" | "failed" | "terminated" = "completed") => {
+    const base = stop("stop-" + status + "-" + output.length, childId, output);
+    const viewRecord = status === "completed" ? base : {
+      ...base,
+      payload: { ...(base.payload as Record<string, unknown>), status }
+    };
+    return codexhubToolCallFromMessage(recordsToViews([viewRecord])[0], "parent")!;
+  };
+  assert.equal(codexhubStopReceipt(makeCall(stoppedText)), "stopped");
+  assert.equal(codexhubStopReceipt(makeCall(idleText)), "idle");
+  assert.equal(codexhubStopReceipt(makeCall(json)), "idle");
+  assert.equal(codexhubStopReceipt(makeCall(stoppedText, "in_progress")), "stopped");
+  assert.equal(codexhubStopReceipt(makeCall(stoppedText, "failed")), undefined);
+  assert.equal(codexhubStopReceipt(makeCall(stoppedText, "terminated")), undefined);
+  assert.equal(codexhubStopReceipt(makeCall(stoppedText.replace(childId, "01a0803a-5615-7d80-98f4-68d74f89186c"))), undefined);
+});
+
+test("same shell record updates its current operation from running to completed and failed", () => {
+  const initial = start("same-start", "A", childId);
+  const pending = { ...initial, payload: { ...(initial.payload as Record<string, unknown>), status: "in_progress" } };
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [pending]);
+  assert.equal(state.tasks[0]?.status, "in_progress");
+  const completed = { ...pending, payload: { ...(pending.payload as Record<string, unknown>), status: "completed", exit_code: 0, aggregated_output: "started" } };
+  state = aggregateCodexhubToolTasks(state, "parent", [completed]);
+  assert.equal(state.tasks[0]?.status, "completed");
+  assert.equal(state.tasks[0]?.output, "started");
+  const failed = { ...completed, payload: { ...(completed.payload as Record<string, unknown>), status: "completed", exit_code: 1, aggregated_output: "spawn failed" } };
+  state = aggregateCodexhubToolTasks(state, "parent", [failed]);
+  assert.equal(state.tasks[0]?.status, "failed");
+  assert.equal(state.tasks[0]?.output, "spawn failed");
+  assert.equal(state.tasks[0]?.lastOperation, "start");
+});
+
+test("same-ID refresh keeps the known position before rejecting an older send", () => {
+  const initial = { ...start("same-id-start", "A", childId), order: 1 };
+  const pendingBase = send("same-id-send", childId, "running", "latest message");
+  const pending = {
+    ...pendingBase,
+    order: 3,
+    payload: { ...(pendingBase.payload as Record<string, unknown>), status: "in_progress" }
+  };
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [initial, pending]);
+  assert.equal(state.tasks[0]?.status, "in_progress");
+  assert.equal(state.tasks[0]?.message, "latest message");
+  const failed: CodexRecord = {
+    id: pending.id,
+    type: pending.type,
+    payload: { ...(pending.payload as Record<string, unknown>), status: "completed", exit_code: 1, aggregated_output: "failed" }
+  };
+  const oldSend = { ...send("same-id-old-send", childId, "old output", "old message"), order: 2 };
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, failed, oldSend]);
+  assert.equal(state.tasks[0]?.status, "failed");
+  assert.equal(state.tasks[0]?.output, "failed");
+  assert.equal(state.tasks[0]?.message, "latest message");
+  assert.equal(state.tasks[0]?.lastOperation, "send");
+});
+
+test("terminated start without a child ID is removed, while a child ID keeps the interrupted task", () => {
+  const noChildBase = start("terminated-start-empty", "A", childId, "");
+  const noChild = { ...noChildBase, payload: { ...(noChildBase.payload as Record<string, unknown>), status: "interrupted" } };
+  assert.equal(aggregateCodexhubToolTasks(undefined, "parent", [noChild]).tasks.length, 0);
+  const withChildBase = start("terminated-start-child", "B", childId);
+  const withChild = { ...withChildBase, payload: { ...(withChildBase.payload as Record<string, unknown>), status: "interrupted" } };
+  const state = aggregateCodexhubToolTasks(undefined, "parent", [withChild]);
+  assert.equal(state.tasks.length, 1);
+  assert.equal(state.tasks[0]?.status, "terminated");
+});
+
+test("canonical operation and message provenance survive a narrowed history page", () => {
+  const positioned = (value: CodexRecord, order: number, historyOrder: number, timestamp: string): CodexRecord => ({
+    ...value, order, historyOrder, timestamp
+  });
+  const initial = positioned(start("ordered-start", "A", childId), 10, 10, "2026-09-10T00:00:10.000Z");
+  const latest = positioned(send("ordered-latest", childId, "latest output", "latest message"), 30, 30, "2026-09-10T00:00:01.000Z");
+  const old = positioned(send("ordered-old", childId, "old output", "old message"), 20, 20, "2026-09-10T00:00:20.000Z");
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [initial, latest]);
+  assert.equal(state.tasks[0]?.message, "latest message");
+  assert.equal(state.tasks[0]?.output, "latest output");
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, old]);
+  assert.equal(state.tasks[0]?.message, "latest message");
+  assert.equal(state.tasks[0]?.output, "latest output");
+  assert.equal(state.tasks[0]?.lastOperation, "send");
+});
+
+test("a latest failed operation stays visible when start or an old send returns", () => {
+  const positioned = (value: CodexRecord, order: number): CodexRecord => ({ ...value, order });
+  const initial = positioned(start("failure-start", "A", childId), 10);
+  const latestSend = positioned(send("failure-send", childId, "latest output", "latest message"), 20);
+  const failedStopBase = stop("failure-stop", childId, "stop failed");
+  const failedStop = positioned({ ...failedStopBase, payload: {
+    ...(failedStopBase.payload as Record<string, unknown>), exit_code: 1
+  } }, 40);
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [initial, latestSend, failedStop]);
+  assert.equal(state.tasks[0]?.lastOperation, "stop");
+  assert.equal(state.tasks[0]?.status, "failed");
+  assert.equal(state.tasks[0]?.output, "stop failed");
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, latestSend]);
+  assert.equal(state.tasks[0]?.lastOperation, "stop");
+  assert.equal(state.tasks[0]?.status, "failed");
+  assert.equal(state.tasks[0]?.output, "stop failed");
+  assert.equal(state.tasks[0]?.message, "latest message");
+});
+
+test("an unconfirmed empty end output cannot inherit an older successful receipt", () => {
+  const positioned = (value: CodexRecord, order: number): CodexRecord => ({ ...value, order });
+  const initial = positioned(start("empty-end-start", "A", childId), 10);
+  const sendRecord = positioned(send("empty-end-send", childId, "accepted", "latest message"), 20);
+  const emptyEnd = positioned(end("empty-end", childId, ""), 30);
+  let state = aggregateCodexhubToolTasks(undefined, "parent", [initial, sendRecord]);
+  state = aggregateCodexhubToolTasks(state, "parent", [initial, sendRecord, emptyEnd]);
+  assert.equal(state.tasks[0]?.lastOperation, "end");
+  assert.equal(state.tasks[0]?.output, "");
+  assert.equal(codexhubEndReceiptMatches(state.tasks[0]!), false);
+});
+
+test("end preview displays confirmed, unconfirmed, and failed receipts distinctly", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { CodexhubToolPreview } = await import("../../src/web/CodexhubToolPreview.js");
+  const receipt = `Ended delegation for thread ${childId}; cancelled 0 queued message(s), canonical running=false; history retained and the thread remains resumable.`;
+  const call = codexhubToolCallFromMessage(recordsToViews([end("end-preview", childId, receipt)])[0], "parent")!;
+  const render = (overrides = {}) => renderToStaticMarkup(createElement(CodexhubToolPreview, { call: { ...call, ...overrides } }));
+  assert.match(render(), /已结束/);
+  assert.doesNotMatch(render(), /结束未确认/);
+  assert.match(render({ output: "" }), /结束未确认/);
+  assert.match(render({ output: receipt.replace(childId, "01a0803a-5615-7d80-98f4-68d74f89186c") }), /结束未确认/);
+  assert.match(render({ status: "failed" }), /结束失败/);
 });
 
 test("CLI tool preview retains the original shell inspector affordance", async () => {

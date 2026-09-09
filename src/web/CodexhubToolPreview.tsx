@@ -9,6 +9,7 @@ import {
   type CodexhubToolCall,
   type CodexhubToolTaskState
 } from "./helpers/codexhubToolCall.js";
+import { codexhubToolStatus } from "./helpers/codexhubToolStatus.js";
 
 type ContextValue = {
   runtimes: RuntimeSummary[];
@@ -93,26 +94,27 @@ export const CodexhubToolProvider = ({ activeThreadId, runtimes, threads, onOpen
           <GripVertical size={14} /><span>任务 · {tasks.length}</span>
         </header>
         <div className="codexhubFloatingTaskList">
-          {tasks.map(task => <CodexhubToolPreview key={`${task.parentThreadId}:${task.threadId ?? task.recordId}`} call={task} />)}
+          {tasks.map(task => <CodexhubToolPreview key={`${task.parentThreadId}:${task.threadId ?? task.recordId}`} call={task} mode="task" />)}
         </div>
       </aside>, document.body) : null}
   </Context.Provider>;
 };
 
-export const CodexhubToolPreview = ({ call, onInspect }: { call: CodexhubToolCall; onInspect?: () => void }) => {
+export const CodexhubToolPreview = ({ call, onInspect, mode = "history" }: {
+  call: CodexhubToolCall;
+  onInspect?: () => void;
+  mode?: "history" | "task";
+}) => {
   const context = React.useContext(Context);
   const [collapsed, setCollapsed] = React.useState(false);
   const target = codexhubAttachedThread(call.threadId, context?.runtimes ?? [], call.invocation.machineId);
   const canOpen = Boolean(context && target?.runtime.online && call.threadId !== call.parentThreadId);
-  const status = call.lastOperation === "end"
-    ? call.status === "failed" ? "结束失败" : "结束未确认"
-    : target ? target.runtime.online ? target.thread.status === "waiting" ? "等待输入" : target.thread.running ? "运行中" : "待续接" : "离线"
-      : call.status === "failed" ? "调用失败" : call.threadId ? "当前后端未找到线程" : call.status === "completed" ? "未获取 Thread ID" : "等待 Thread ID";
+  const status = codexhubToolStatus(call, target, mode);
   const taskName = call.invocation.name ?? target?.thread.title ?? `CodexHub ${call.invocation.operation}`;
   return <section className="codexhubTaskPreview" aria-label="CodexHub 调用">
     <div className="codexhubTaskHeading"><Bot size={17} /><button type="button" className="codexhubTaskName" title={taskName}
       aria-expanded={!collapsed} onClick={event => { event.stopPropagation(); setCollapsed(value => !value); }}><strong>{taskName}</strong></button>
-      <span className={target?.thread.running ? "running" : ""}>{status}</span>
+      <span className={status.running ? "running" : ""}>{status.text}</span>
       {onInspect ? <button type="button" className="iconButton" aria-label="查看原始工具详情" onClick={event => { event.stopPropagation(); onInspect(); }}><Info size={14} /></button> : null}
       {context ? <button type="button" className="iconButton codexhubTaskOpen" aria-label="查看完整线程" title="查看完整线程" disabled={!canOpen} onClick={event => { event.stopPropagation(); context.open(call); }}><ExternalLink size={13} /><span>查看</span></button> : null}
     </div>

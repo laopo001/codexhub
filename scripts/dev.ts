@@ -1,11 +1,23 @@
+import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
-const services = [
-  { name: "api", args: ["run", "dev:api"] },
-  { name: "web", args: ["run", "dev:web"] },
-] as const;
+const mode = process.argv[2];
+if (mode && mode !== "api") {
+  console.error(`codexhub dev: unknown mode ${mode}; use no argument or api`);
+  process.exit(1);
+}
 
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const apiDataDir = path.resolve(import.meta.dirname, "../tmp/dev-api");
+const apiService = {
+  name: "api",
+  command: process.execPath,
+  args: ["--import", "tsx", "src/cli/codexhub.ts", "server", "--host", "127.0.0.1", "--port", "18788"],
+  env: { ...process.env, CODEX_HUB_DATA_DIR: apiDataDir }
+};
+const services = mode === "api"
+  ? [apiService]
+  : [apiService, { name: "web", command: pnpmCommand, args: ["run", "dev:web"], env: process.env }];
 const children: ChildProcess[] = [];
 const completed = new Set<ChildProcess>();
 let exitCode = 0;
@@ -24,9 +36,9 @@ const stopAll = (signal: NodeJS.Signals) => {
 };
 
 for (const service of services) {
-  const child = spawn(pnpmCommand, service.args, {
+  const child = spawn(service.command, service.args, {
     cwd: process.cwd(),
-    env: process.env,
+    env: service.env,
     stdio: "inherit",
   });
   children.push(child);
@@ -50,6 +62,8 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.once(signal, () => stopAll(signal));
 }
 
-console.error("codexhub dev starting: web http://127.0.0.1:15173 -> api http://127.0.0.1:18788");
+console.error(mode === "api"
+  ? `codexhub dev starting: api http://127.0.0.1:18788 (data dir ${apiDataDir})`
+  : "codexhub dev starting: web http://127.0.0.1:15173 -> api http://127.0.0.1:18788");
 await done;
 process.exitCode = exitCode;

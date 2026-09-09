@@ -4,7 +4,7 @@
 
 Agent 开发改动时按这套固定流程起本地服务并用 CDP 测试，不要临时发明端口或浏览器实例。
 
-1. 默认使用 `pnpm dev` 同时启动两个本地服务：后端 `pnpm run dev:api`（监听 `127.0.0.1:18788`），前端 `pnpm run dev:web`（Vite 监听 `127.0.0.1:15173`，`/api` 代理到 `18788`）。只改后端可只起 `dev:api`，只改前端可只起 `dev:web`。不要改默认端口，也不要让两端的端口对不上。
+1. 默认使用 `pnpm dev` 同时启动两个本地服务：后端 `pnpm run dev:api`（监听 `127.0.0.1:18788`），前端 `pnpm run dev:web`（Vite 监听 `127.0.0.1:15173`，`/api` 代理到 `18788`）。两者由 `scripts/dev.ts` 统一启动；无参数启动 API 和 Web，传入 `api` 只启动 API。开发 API 子进程必须在 spawn 环境中使用仓库绝对路径 `<repo>/tmp/dev-api` 覆盖 `CODEX_HUB_DATA_DIR`，与日常 authority 的 `~/.config/codexhub` 隔离；用户显式设置的 shell/`.env` 环境变量仍保留。只改后端可只起 `dev:api`，只改前端可只起 `dev:web`。不要改默认端口，也不要让两端的端口对不上。
 2. CDP 必须复用全局规则里的 Windows Chrome 实例（`http://127.0.0.1:19222`，user-data-dir `D:\Chrome\User Data`）。连不上就按全局 CDP 排查步骤处理，不要自启其他 Chrome/Chromium、不要换端口或 user-data-dir、不要用 Playwright 自带浏览器。
 3. 浏览测试入口是前端 `http://127.0.0.1:15173`；Vite 会把 `/api` 请求代理到 `18788`，所以单开一个 tab 即可覆盖前后端链路，不要再单独打开 `18788`。
 4. 自动化优先新建 tab 工作，不复用用户已有 tab；任务结束只关闭本次任务创建的 tab，不要关闭 CDP 浏览器、Chrome 进程或整个 browser context。直接用 Playwright API 连接 CDP 时结束用 `browser.disconnect()`，不要用 `browser.close()`。

@@ -38,7 +38,7 @@
   },
   "scripts": {
     "dev": "tsx scripts/dev.ts",
-    "dev:api": "tsx src/cli/codexhub.ts server --host 127.0.0.1 --port 18788",
+    "dev:api": "tsx scripts/dev.ts api",
     "dev:web": "vite --host 127.0.0.1 --port 15173",
     "bot": "tsx plugins/telegram/bot.ts",
     "codexhub": "tsx src/cli/codexhub.ts",
