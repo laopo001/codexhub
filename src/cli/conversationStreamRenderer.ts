@@ -147,11 +147,12 @@ export class ConversationStreamRenderer {
     if (!tool.outputOnly && !state.called) {
       state.name = tool.name;
       state.called = true;
-      this.writeBlock("tool_call", `${tool.name}${tool.parameters ? `\n${tool.parameters}` : ""}`);
+      if (tool.fullRequest) this.writeBlock("tool_call", tool.call);
+      else this.write(`${tool.call}\n`);
     }
     if (tool.terminal && !state.completed) {
       state.completed = true;
-      this.writeBlock("tool_result", `${state.name}\n${tool.result}`);
+      if (tool.failed) this.writeBlock("tool_result", `${state.name}\n${tool.result}`);
     }
   }
 

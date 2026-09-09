@@ -183,7 +183,7 @@ codexhub --connect http://remote-host:28788 send <threadId> "继续分析"
 
 桌宠 Codex Activity 只给当前轮由 CLI 发起的活动加 `[cli]` 标签，Web 活动不加标签；运行、等待和失败状态仍独立显示。运行中补发引导不改变本轮来源，开始新一轮时更新来源。旧记录缺少来源时不推测。
 
-终端实时输出默认保留 `[commentary]`、`[final_answer]`，用 `[tool_call]` 显示工具名与关键参数，用 `[tool_result]` 显示完成状态和已有耗时。成功结果正文隐藏，长参数与失败诊断截断，等待期间不追加心跳。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
+终端实时输出默认保留 `[commentary]`、`[final_answer]`。普通工具调用用单行 `[tool_call]` 显示工具名与关键参数，包含标签在内最多 200 个字符；审批和用户输入请求保留完整的多行请求内容。`[tool_result]` 只显示失败工具的工具名、退出码和短诊断，诊断最多 400 个字符、3 行并按调用去重。成功结果正文和成功结果块隐藏，等待期间不追加心跳。排查按准确 threadId 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。
 
 ```bash
 codexhub --connect http://host:28788 start "检查项目结构" \

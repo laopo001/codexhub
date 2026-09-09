@@ -3,19 +3,36 @@ import { parseJsonObject, payloadDurationMs, formatMilliseconds, formatWriteStdi
 
 type Fields = Record<string, unknown>;
 const sensitive = /(?:token|password|passwd|secret|authorization|cookie|api[_-]?key|credential)/i;
+const toolCallMaxChars = 200;
+const failureDiagnosticMaxChars = 400;
+const failureDiagnosticMaxLines = 3;
+const truncationNotice = " … 已截断，完整内容见 Web 工具详情";
+
+const sanitizeText = (value: string) => value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+  .replace(/(--[\w-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w-]*\s+)("[^"]*"|'[^']*'|[^\s;]+)/gi, "$1[REDACTED]")
+  .replace(/(Bearer\s+)[^\s"']+/gi, "$1[REDACTED]")
+  .replace(/((?:["']?[\w-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w-]*["']?|["']?(?:authorization|cookie)["']?)\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&}]+)/gi, "$1[REDACTED]")
+  .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")
+  .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+
+const boundedText = (value: string, maxChars: number, maxLines: number, collapseWhitespace = false) => {
+  const clean = sanitizeText(value);
+  const normalized = collapseWhitespace ? clean.replace(/\s+/g, " ").trim() : clean;
+  const lineLimited = normalized.split("\n").slice(0, maxLines).join("\n");
+  if (lineLimited === normalized && lineLimited.length <= maxChars) return lineLimited;
+  const contentMaxChars = Math.max(0, maxChars - truncationNotice.length);
+  return `${lineLimited.slice(0, contentMaxChars)}${truncationNotice}`;
+};
+
+const compactToolCall = (name: string, parameters: string) => {
+  const label = "[tool_call] ";
+  const content = `${name}${parameters ? ` · ${parameters}` : ""}`;
+  return `${label}${boundedText(content, toolCallMaxChars - label.length, 1, true)}`;
+};
 
 // CLI summaries are bounded; full details remain in the Web inspector.
-export const toolSummaryText = (value: string, maxChars = 1000, maxLines = 8) => {
-  const clean = value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/(--[\w-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w-]*\s+)("[^"]*"|'[^']*'|[^\s;]+)/gi, "$1[REDACTED]")
-    .replace(/(Bearer\s+)[^\s"']+/gi, "$1[REDACTED]")
-    .replace(/((?:[\w-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w-]*|authorization|cookie)\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi, "$1[REDACTED]")
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
-  const lines = clean.split("\n");
-  const clipped = lines.slice(0, maxLines).join("\n").slice(0, maxChars);
-  return clipped + (clipped.length < clean.length ? "\n… 已截断，完整内容见 Web 工具详情" : "");
-};
+export const toolSummaryText = (value: string, maxChars = 1000, maxLines = 8) =>
+  boundedText(value, maxChars, maxLines);
 
 const redactFields = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(redactFields);
@@ -30,6 +47,7 @@ export const toolPresentation = (view: CodexRecordView) => {
   const p = asRecord(view.record.payload) ?? {};
   const type = String(p.type ?? "tool");
   const outputOnly = type.endsWith("_output");
+  const interactiveRequest = type === "permission_request" || type === "user_input_request";
   const args = objectFrom(p.arguments);
   const action = objectFrom(p.action);
   const name = type === "local_shell_call" ? "exec_command"
@@ -42,12 +60,11 @@ export const toolPresentation = (view: CodexRecordView) => {
   let parameters: string;
   if (type === "local_shell_call") {
     const command = Array.isArray(action.command) ? action.command.map(text).join(" ") : text(action.command ?? p.command);
-    parameters = `command: ${toolSummaryText(command, 600, 4)}`;
     const cwd = action.cwd ?? action.workdir ?? p.cwd ?? p.workdir;
-    if (cwd) parameters += `\ncwd: ${text(cwd)}`;
+    parameters = `${cwd ? `cwd: ${text(cwd)} · ` : ""}command: ${command}`;
   } else if (name.endsWith("exec_command")) {
-    parameters = `command: ${toolSummaryText(text(args.cmd ?? args.command), 600, 4)}`;
-    if (args.workdir ?? args.cwd) parameters += `\ncwd: ${text(args.workdir ?? args.cwd)}`;
+    const cwd = args.workdir ?? args.cwd;
+    parameters = `${cwd ? `cwd: ${text(cwd)} · ` : ""}command: ${text(args.cmd ?? args.command)}`;
   } else if (name.endsWith("write_stdin")) {
     parameters = formatWriteStdinSummary(redactFields(args) as Fields);
   } else if (type === "file_change") {
@@ -58,8 +75,8 @@ export const toolPresentation = (view: CodexRecordView) => {
   } else if (name.endsWith("apply_patch")) {
     const patch = text(args.patch ?? args.input ?? p.input);
     parameters = patch.split("\n").filter(line => /^\*\*\* (?:Add File|Update File|Delete File|Move to):/.test(line)).join("\n") || "patch: 内容见 Web 工具详情";
-  } else if (type === "permission_request" || type === "user_input_request") {
-    parameters = view.text;
+  } else if (interactiveRequest) {
+    parameters = sanitizeText(view.text);
   } else if (type === "web_search_call") {
     parameters = `query: ${text(p.query ?? p.action ?? "")}`;
   } else {
@@ -88,7 +105,11 @@ export const toolPresentation = (view: CodexRecordView) => {
     ?? (type === "sleep" ? payloadDurationMs(p, "elapsed_ms", "elapsedMs") : payloadDurationMs(p, "duration_ms", "durationMs"))
     ?? payloadDurationMs(result, "duration_ms", "durationMs");
   const summary = `${failed ? "✗ 失败" : "✓ 完成"}${exitCode !== undefined && exitCode !== -1 ? ` · exit ${exitCode}` : ""}${duration !== undefined ? ` · ${formatMilliseconds(duration)}` : ""}`;
-  const diagnostic = failed ? toolSummaryText(text(output ?? view.text), 1200, 6) : "";
-  return { key, name: toolSummaryText(name, 120, 1), outputOnly, parameters: toolSummaryText(parameters), terminal,
+  const diagnostic = failed ? toolSummaryText(text(output ?? view.text), failureDiagnosticMaxChars, failureDiagnosticMaxLines) : "";
+  const displayName = boundedText(name, 120, 1, true);
+  const call = interactiveRequest
+    ? `${displayName}${parameters ? `\n${parameters}` : ""}`
+    : compactToolCall(displayName, parameters);
+  return { key, name: displayName, outputOnly, call, fullRequest: interactiveRequest, terminal, failed,
     result: `${summary}${diagnostic ? `\n${diagnostic}` : ""}` };
 };

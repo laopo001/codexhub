@@ -44,9 +44,9 @@ test("start text arrives live, preserves stdin/options, and ignores history", { 
     assert.match(output.value, /Thread ID: stream-thread/);
     assert.match(output.value, /\[commentary\][\s\S]*live commentary/);
     assert.match(output.value, /\[final_answer\][\s\S]*live final/);
-    assert.match(output.value, /\[tool_call\]\nexec_command/);
-    assert.match(output.value, /\[tool_result\]/);
-    assert.match(output.value, /\[tool_call\]\napply_patch/);
+    assert.match(output.value, /\[tool_call\] exec_command/);
+    assert.doesNotMatch(output.value, /\[tool_result\]/);
+    assert.match(output.value, /\[tool_call\] apply_patch/);
     assert.match(output.value, /\[error\][\s\S]*visible stream error/);
     assert.match(output.value, /\[tool_call\]\nuser_input_request[\s\S]*Need input/);
     assert.doesNotMatch(output.value, /output-\d+/);
@@ -303,30 +303,32 @@ test("normal renderer separates interleaved tools and keeps replacements explici
 
   const rendered = chunks.join("");
   assert.match(rendered, /\[commentary\]\n先检查项目\n\[tool_call\]/);
-  assert.match(rendered, /\[tool_result\][\s\S]*✓ 完成 · exit 0\n\[final_answer\]/);
+  assert.doesNotMatch(rendered, /\[tool_result\]/);
   assert.doesNotMatch(rendered, /leaked output/);
   assert.match(rendered, /\[commentary replaced\]\nhello there/);
   assert.doesNotMatch(rendered, /commentary update/);
 });
 
-test("normal renderer prints a shell command once and appends its completion result", () => {
+test("normal renderer prints a shell command once and suppresses its successful result", () => {
   const chunks: string[] = [];
   const renderer = new ConversationStreamRenderer((chunk) => chunks.push(chunk));
   renderer.event({
     kind: "record", threadId, record: record("shell-start", {
       type: "local_shell_call", call_id: "shell-once", status: "in_progress",
-      action: { type: "exec", command: ["echo", "ok"] }, aggregated_output: ""
+      action: { type: "exec", command: ["echo", "ok"], cwd: "/workspace" }, aggregated_output: ""
     }, "response_item")
   });
   renderer.event({
     kind: "record", threadId, record: record("shell-complete", {
       type: "local_shell_call", call_id: "shell-once", status: "completed",
-      action: { type: "exec", command: ["echo", "ok"] }, aggregated_output: "final output", exit_code: 0
+      action: { type: "exec", command: ["echo", "ok"], cwd: "/workspace" }, aggregated_output: "final output", exit_code: 0
     }, "response_item")
   });
 
   const rendered = chunks.join("");
   assert.equal((rendered.match(/command: echo ok/g) ?? []).length, 1);
+  assert.match(rendered, /\[tool_call\] exec_command · cwd: \/workspace · command: echo ok/);
+  assert.doesNotMatch(rendered, /\[tool_result\]/);
   assert.doesNotMatch(rendered, /final output/);
 });
 
@@ -400,7 +402,7 @@ test("normal renderer matches a no-call-id shell completion by the same record i
 
   const rendered = chunks.join("");
   assert.equal((rendered.match(/command: printf ok/g) ?? []).length, 1);
-  assert.match(rendered, /✓ 完成 · exit 0/);
+  assert.doesNotMatch(rendered, /\[tool_result\]/);
 });
 
 test("normal renderer keeps failed shell output while suppressing its repeated command", () => {
@@ -438,7 +440,8 @@ test("normal renderer hides success output and bounds long failure diagnostics",
   assert.match(rendered, /failure-1/);
   assert.doesNotMatch(rendered, /failure-300/);
   assert.match(rendered, /已截断/);
-  assert.equal((rendered.match(/\[tool_result\]/g) ?? []).length, 2);
+  assert.equal((rendered.match(/\[tool_result\]/g) ?? []).length, 1);
+  assert.ok(rendered.length < 500);
 });
 
 type Fixture = {
@@ -648,9 +651,8 @@ test("function call/output correlate once without treating call completion as to
   assert.equal(output, waiting, "call updates must not print a heartbeat or premature result");
   for (const id of ["result1", "result2"]) emit(id, { type: "function_call_output", call_id: "f1", output: "private success body", status: "completed" });
   assert.equal((output.match(/\[tool_call\]/g) ?? []).length, 1);
-  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 1);
-  assert.match(output, /exec_command\ncommand: pnpm test\ncwd: \/workspace/);
-  assert.match(output, /\[tool_result\]\nexec_command\n✓ 完成/);
+  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 0);
+  assert.match(output, /\[tool_call\] exec_command · cwd: \/workspace · command: pnpm test/);
   assert.doesNotMatch(output, /private success body/);
 });
 
@@ -679,7 +681,7 @@ test("orphan results do not fabricate calls and late calls do not duplicate resu
   emit("in", { type: "function_call", call_id: "late", name: "search", arguments: '{"query":"target"}', status: "completed" });
   emit("out2", { type: "function_call_output", call_id: "late", output: "hidden" });
   assert.equal((output.match(/\[tool_call\]/g) ?? []).length, 1);
-  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 1);
+  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 0);
   assert.doesNotMatch(output, /hidden/);
 });
 
@@ -693,7 +695,10 @@ test("tool parameters are bounded, preserve cwd and redact common credentials", 
   assert.match(output, /已截断/);
   assert.match(output, /REDACTED/);
   assert.doesNotMatch(output, /secret-(one|two|three|four|five)/);
-  assert.ok(output.length < 1800);
+  const callLines = output.split("\n").filter((line) => line.startsWith("[tool_call] exec_command") || line.startsWith("[tool_call] request"));
+  assert.ok(callLines.length === 2);
+  assert.ok(callLines.every((line) => line.length <= 200));
+  assert.ok(output.length < 700);
 });
 
 test("patch previews show paths instead of edit bodies", () => {
@@ -705,6 +710,49 @@ test("patch previews show paths instead of edit bodies", () => {
   }, "response_item") });
   assert.match(output, /src\/app.ts/);
   assert.doesNotMatch(output, /private edit body/);
+  assert.match(output, /\[tool_call\] apply_patch · \*\*\* Update File: src\/app.ts/);
+});
+
+test("approval and user input requests keep complete multiline details while redacting them", () => {
+  let output = "";
+  const renderer = new ConversationStreamRenderer((chunk) => { output += chunk; });
+  renderer.event({ kind: "record", threadId, record: record("permission", {
+    type: "permission_request", status: "pending_approval",
+    reason: `${"permission detail ".repeat(20)}permission-tail`, cwd: "/workspace",
+    permissions: { token: "secret-token", scope: "workspace" }
+  }, "response_item") });
+  renderer.event({ kind: "record", threadId, record: record("input", {
+    type: "user_input_request", status: "pending_user_input",
+    questions: [{ header: "Input", question: `${"question detail ".repeat(20)}question-tail`, options: null }]
+  }, "response_item") });
+
+  assert.match(output, /\[tool_call\]\npermission_request\n/);
+  assert.match(output, /permission-tail/);
+  assert.match(output, /scope/);
+  assert.match(output, /\[tool_call\]\nuser_input_request\n/);
+  assert.match(output, /question-tail/);
+  assert.doesNotMatch(output, /secret-token/);
+  assert.match(output, /REDACTED/);
+  assert.doesNotMatch(output, /已截断/);
+});
+
+test("repeated failures print once and bound the displayed tool name", () => {
+  let output = "";
+  const renderer = new ConversationStreamRenderer((chunk) => { output += chunk; });
+  const longName = `tool-${"x".repeat(500)}`;
+  const emit = (id: string) => renderer.event({ kind: "record", threadId, record: record(id, {
+    type: "function_call_output", call_id: "repeated-failure", namespace: "functions", name: longName,
+    status: "failed", output: "failure detail"
+  }, "response_item") });
+  emit("failure-1");
+  emit("failure-2");
+
+  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 1);
+  const displayedName = output.match(/\[tool_result\]\n([^\n]+)/)?.[1];
+  assert.ok(displayedName);
+  assert.ok(displayedName.length <= 120);
+  assert.match(output, /failure detail/);
+  assert.doesNotMatch(output, new RegExp(longName));
 });
 
 test("nonzero structured and standard shell outputs cannot be labelled successful", () => {

@@ -144,7 +144,7 @@ test("tool completion prints one status and hides buffered output", () => {
   assert.ok(!output.includes("output-line-001"));
   update("completed", body);
   update("completed", body);
-  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 1);
+  assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 0);
   assert.doesNotMatch(output, /output-line-/);
   assert.ok(!output.includes("output-line-150"));
 });
