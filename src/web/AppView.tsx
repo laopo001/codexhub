@@ -2,6 +2,7 @@ import { Popconfirm, Tabs } from "antd";
 import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { subagentAssignmentForChild } from "../core/codexRecordView.js";
 import { CodexhubToolProvider } from "./CodexhubToolPreview.js";
+import { useCodexhubTaskHistory } from "./helpers/useCodexhubTaskHistory.js";
 import { AppDialogs } from "./AppDialogs.js";
 import { AppSidebar } from "./AppSidebar.js";
 import { threadDisplayRecords } from "./appHelpers.js";
@@ -23,6 +24,7 @@ type ReadySubagentThreadDialog = SubagentThreadDialogState & {
 
 export const AppView = ({ viewModel }: AppViewProps) => {
   const { workspace, sidebar, dialogs } = viewModel;
+  useCodexhubTaskHistory(workspace.activeThread ?? undefined, workspace.loadOlderThread);
   const {
     activeRuntime,
     activeTabThreadId,
@@ -114,7 +116,7 @@ export const AppView = ({ viewModel }: AppViewProps) => {
   );
 
   return (
-    <CodexhubToolProvider runtimes={workspace.runtimeList} threads={[...openThreads, ...(subagentThreadDialog?.thread ? [subagentThreadDialog.thread] : [])]} onOpen={openSubagentThread}>
+    <CodexhubToolProvider activeThreadId={workspace.activeThread?.threadId} runtimes={workspace.runtimeList} threads={[...openThreads, ...(subagentThreadDialog?.thread ? [subagentThreadDialog.thread] : [])]} onOpen={openSubagentThread}>
     <main className={`app ${sidebarCollapsed ? "sidebarCollapsed" : ""}`}>
       {!sidebarCollapsed ? (
         <button

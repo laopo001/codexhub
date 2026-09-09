@@ -63,6 +63,23 @@ test("parses quoted arguments, env prefixes, shell wrappers, and line continuati
   });
 });
 
+test("parses an app-server serialized single-element shell command with heredoc input", () => {
+  const command = [
+    `/usr/bin/zsh -lc "codexhub start - --name 'Breeze dialogue repair' --cwd /workspace/videos --model gpt-5.6-luna --effort xhigh <<'TASK'`,
+    "Review the dialogue instructions and keep the existing voice bindings.",
+    "TASK\""
+  ].join("\n");
+
+  assert.deepEqual(invocation(parseCodexhubInvocation([command])), {
+    operation: "start",
+    name: "Breeze dialogue repair",
+    cwd: "/workspace/videos",
+    model: "gpt-5.6-luna",
+    effort: "xhigh",
+    input: "Review the dialogue instructions and keep the existing voice bindings."
+  });
+});
+
 test("parses send, stop, and end IDs only from their position arguments", () => {
   assert.deepEqual(invocation(parseCodexhubInvocation(`cxh send --model=gpt-5 ${threadId} "continue this" --no-wait`)), {
     operation: "send",
@@ -116,6 +133,12 @@ test("rejects echoes, ordinary task text, dynamic IDs, and ambiguous commands", 
   assert.equal(parseCodexhubInvocation(`codexhub start --name x input; echo done`), null);
   assert.equal(parseCodexhubInvocation("python -c 'codexhub start --name x input'"), null);
   assert.equal(parseCodexhubInvocation("codexhub start --name x input --unknown"), null);
+});
+
+test("rejects unsafe commands in a serialized single-element shell array", () => {
+  assert.equal(parseCodexhubInvocation(["/usr/bin/zsh -lc \"echo 'codexhub start --name fake input'\""]), null);
+  assert.equal(parseCodexhubInvocation(["/usr/bin/zsh -lc \"codexhub send $THREAD_ID 'input'\""]), null);
+  assert.equal(parseCodexhubInvocation(["/usr/bin/zsh -lc \"codexhub start --name x input && echo done\""]), null);
 });
 
 test("very large or deeply nested shell wrappers remain ordinary shell previews", () => {

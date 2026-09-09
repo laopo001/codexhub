@@ -80,6 +80,14 @@ function parseShellSource(source: string, depth = 0): CodexhubInvocation | null 
 function parseArgumentVector(argv: string[]): CodexhubInvocation | null {
   if (argv.length === 0 || argv.some((value) => typeof value !== "string")) return null;
 
+  // Some app-server shell records serialize the complete shell invocation as
+  // one command-array element, e.g. ["/usr/bin/zsh -lc \"codexhub ...\""]
+  // instead of preserving the argv boundaries. Re-enter the existing shell
+  // parser for that shape; real argv arrays continue through the vector path.
+  if (argv.length === 1) {
+    return parseShellSource(argv[0]);
+  }
+
   const executable = resolveExecutable(argv.map((value) => ({ value })));
   if (!executable) return null;
   if (executable.kind === "shell") return parseShellSource(executable.command);

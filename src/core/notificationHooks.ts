@@ -39,18 +39,34 @@ type NtfyNotificationLogger = {
   error: (message: string) => void;
 };
 
+type NtfyTimer = ReturnType<typeof setTimeout>;
+
+type NtfyNotificationRuntime = {
+  now?: () => number;
+  setTimeout?: (callback: () => void, delayMs: number) => NtfyTimer;
+  clearTimeout?: (timer: NtfyTimer) => void;
+  fetch?: typeof fetch;
+};
+
 const maxRememberedNotificationKeys = 1000;
+const ntfyTerminalRepeatWindowMs = 60_000;
+const ntfyTerminalRepeatIntervalMs = 10_000;
 
 type NtfyTurnState = {
   sequenceId: string;
   lastSentAt: number;
   queued?: NtfyNotificationPayload;
-  timer?: ReturnType<typeof setTimeout>;
+  progressTimer?: NtfyTimer;
+  terminal?: {
+    payload: NtfyNotificationPayload;
+    repeatUntil: number;
+  };
 };
 
 type NtfyQueuedPublish = {
   payload: NtfyNotificationPayload;
   terminal: boolean;
+  repeat: boolean;
   attempt: number;
   readyAt: number;
   order: number;
@@ -71,14 +87,24 @@ export class NtfyNotificationRunner {
   private readonly completedKeySet = new Set<string>();
   private readonly publishQueue = new Map<string, NtfyQueuedPublish>();
   private publishInFlight = false;
-  private publishTimer?: ReturnType<typeof setTimeout>;
+  private publishTimer?: NtfyTimer;
   private publishOrder = 0;
   private nextPublishAt = 0;
+  private readonly now: () => number;
+  private readonly setTimer: (callback: () => void, delayMs: number) => NtfyTimer;
+  private readonly clearTimer: (timer: NtfyTimer) => void;
+  private readonly fetchImpl: typeof fetch;
 
   constructor(
     private readonly config: NtfyNotificationConfig,
-    private readonly logger: NtfyNotificationLogger = console
-  ) {}
+    private readonly logger: NtfyNotificationLogger = console,
+    runtime: NtfyNotificationRuntime = {}
+  ) {
+    this.now = runtime.now ?? Date.now;
+    this.setTimer = runtime.setTimeout ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    this.clearTimer = runtime.clearTimeout ?? ((timer) => clearTimeout(timer));
+    this.fetchImpl = runtime.fetch ?? fetch;
+  }
 
   handleThreadEvent(event: ThreadStreamEvent, records: CodexRecord[]) {
     if (event.historical || event.kind !== "record" || !event.record) return;
@@ -92,7 +118,7 @@ export class NtfyNotificationRunner {
     if (eventType === "task_started") {
       if (this.completedKeySet.has(sequenceId) || this.turns.has(sequenceId)) return;
       const state = this.createTurnState(sequenceId);
-      this.sendNow(state, runningNtfyPayload(event.thread, event.record, records, sequenceId, turnId));
+      this.sendNow(state, runningNtfyPayload(event.thread, event.record, records, sequenceId, turnId, this.now()));
       return;
     }
 
@@ -100,7 +126,7 @@ export class NtfyNotificationRunner {
       if (!taskCompleteRecordIsForLatestUserInput(event.record, records, event.thread)) return;
       if (!this.rememberCompletedKey(sequenceId)) return;
       const state = this.turns.get(sequenceId) ?? this.createTurnState(sequenceId);
-      this.sendNow(state, terminalNtfyPayload(event.thread, event.record, records, sequenceId, turnId));
+      this.startTerminal(state, terminalNtfyPayload(event.thread, event.record, records, sequenceId, turnId));
       return;
     }
 
@@ -113,7 +139,7 @@ export class NtfyNotificationRunner {
     const state = this.turns.get(sequenceId) ?? this.createTurnState(sequenceId);
     this.scheduleProgress(
       state,
-      runningNtfyPayload(event.thread, event.record, records, sequenceId, turnId)
+      runningNtfyPayload(event.thread, event.record, records, sequenceId, turnId, this.now())
     );
   }
 
@@ -127,44 +153,59 @@ export class NtfyNotificationRunner {
   }
 
   private sendNow(state: NtfyTurnState, payload: NtfyNotificationPayload) {
-    if (state.timer) {
-      clearTimeout(state.timer);
-      state.timer = undefined;
+    if (state.progressTimer) {
+      this.clearTimer(state.progressTimer);
+      state.progressTimer = undefined;
     }
     state.queued = undefined;
-    state.lastSentAt = Date.now();
+    state.lastSentAt = this.now();
     this.enqueue(payload, isNtfyTerminalStatus(payload.status));
+  }
+
+  private startTerminal(state: NtfyTurnState, payload: NtfyNotificationPayload) {
+    state.terminal = {
+      payload,
+      repeatUntil: this.now() + ntfyTerminalRepeatWindowMs
+    };
+    this.sendNow(state, payload);
   }
 
   private scheduleProgress(state: NtfyTurnState, payload: NtfyNotificationPayload) {
     state.queued = payload;
-    const waitMs = Math.max(0, this.config.updateIntervalMs - (Date.now() - state.lastSentAt));
+    const waitMs = Math.max(0, this.config.updateIntervalMs - (this.now() - state.lastSentAt));
     if (waitMs === 0) {
       const next = state.queued;
       state.queued = undefined;
-      state.lastSentAt = Date.now();
+      state.lastSentAt = this.now();
       if (next) this.enqueue(next, false);
       return;
     }
-    if (state.timer) return;
-    state.timer = setTimeout(() => {
-      state.timer = undefined;
+    if (state.progressTimer) return;
+    state.progressTimer = this.setTimer(() => {
+      state.progressTimer = undefined;
       const next = state.queued;
       state.queued = undefined;
-      state.lastSentAt = Date.now();
+      state.lastSentAt = this.now();
       if (next) this.enqueue(next, false);
     }, waitMs);
-    state.timer.unref?.();
+    state.progressTimer.unref?.();
   }
 
-  private enqueue(payload: NtfyNotificationPayload, terminal: boolean) {
+  private enqueue(
+    payload: NtfyNotificationPayload,
+    terminal: boolean,
+    repeat = false,
+    readyAt = this.now()
+  ) {
     const existing = this.publishQueue.get(payload.sequenceId);
     if (existing?.terminal && !terminal) return;
+    if (existing?.terminal && terminal) return;
     this.publishQueue.set(payload.sequenceId, {
       payload,
       terminal,
+      repeat,
       attempt: 1,
-      readyAt: Date.now(),
+      readyAt,
       order: existing?.order ?? ++this.publishOrder
     });
     this.schedulePublish();
@@ -173,10 +214,10 @@ export class NtfyNotificationRunner {
   private schedulePublish() {
     if (this.publishInFlight || !this.publishQueue.size) return;
     if (this.publishTimer) {
-      clearTimeout(this.publishTimer);
+      this.clearTimer(this.publishTimer);
       this.publishTimer = undefined;
     }
-    const now = Date.now();
+    const now = this.now();
     const nextReadyAt = Math.max(
       this.nextPublishAt,
       Math.min(...[...this.publishQueue.values()].map((item) => item.readyAt))
@@ -186,7 +227,7 @@ export class NtfyNotificationRunner {
       void this.drainPublishQueue();
       return;
     }
-    this.publishTimer = setTimeout(() => {
+    this.publishTimer = this.setTimer(() => {
       this.publishTimer = undefined;
       void this.drainPublishQueue();
     }, waitMs);
@@ -195,7 +236,7 @@ export class NtfyNotificationRunner {
 
   private async drainPublishQueue() {
     if (this.publishInFlight || !this.publishQueue.size) return;
-    const now = Date.now();
+    const now = this.now();
     if (now < this.nextPublishAt) {
       this.schedulePublish();
       return;
@@ -211,11 +252,18 @@ export class NtfyNotificationRunner {
     if (this.publishQueue.get(item.payload.sequenceId) === item) {
       this.publishQueue.delete(item.payload.sequenceId);
     }
+    if (item.repeat && item.attempt === 1 && !this.terminalRepeatIsActive(item.payload.sequenceId, now)) {
+      this.clearTurnState(item.payload.sequenceId);
+      this.schedulePublish();
+      return;
+    }
     this.publishInFlight = true;
     this.nextPublishAt = now + this.config.requestIntervalMs;
     let retryScheduled = false;
+    let published = false;
     try {
       await this.publish(item.payload);
+      published = true;
     } catch (error: unknown) {
       if (item.terminal && item.attempt < ntfyTerminalMaxAttempts && ntfyPublishIsRetryable(error)) {
         const delayMs = ntfyRetryDelayMs(error, item.attempt, this.config.requestIntervalMs);
@@ -223,7 +271,7 @@ export class NtfyNotificationRunner {
         this.publishQueue.set(item.payload.sequenceId, {
           ...item,
           attempt: item.attempt + 1,
-          readyAt: Date.now() + delayMs,
+          readyAt: this.now() + delayMs,
           order: ++this.publishOrder
         });
         this.logger.error(
@@ -237,8 +285,11 @@ export class NtfyNotificationRunner {
     } finally {
       this.publishInFlight = false;
       if (item.terminal && !retryScheduled) {
-        const state = this.turns.get(item.payload.sequenceId);
-        if (state) this.turns.delete(item.payload.sequenceId);
+        if (published) {
+          this.handleTerminalPublishSuccess(item.payload.sequenceId);
+        } else {
+          this.clearTurnState(item.payload.sequenceId);
+        }
       }
       this.schedulePublish();
     }
@@ -246,10 +297,10 @@ export class NtfyNotificationRunner {
 
   private async publish(payload: NtfyNotificationPayload) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const timeout = this.setTimer(() => controller.abort(), this.config.timeoutMs);
     timeout.unref?.();
     try {
-      const response = await fetch(ntfySequenceUrl(this.config.url, payload.sequenceId), {
+      const response = await this.fetchImpl(ntfySequenceUrl(this.config.url, payload.sequenceId), {
         method: "POST",
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
@@ -265,13 +316,45 @@ export class NtfyNotificationRunner {
       if (!response.ok) {
         throw new NtfyPublishError(
           response.status,
-          ntfyRetryAfterMs(response.headers.get("retry-after")),
+          ntfyRetryAfterMs(response.headers.get("retry-after"), this.now()),
           responseBody
         );
       }
     } finally {
-      clearTimeout(timeout);
+      this.clearTimer(timeout);
     }
+  }
+
+  private handleTerminalPublishSuccess(sequenceId: string) {
+    const state = this.turns.get(sequenceId);
+    const terminal = state?.terminal;
+    const now = this.now();
+    if (!state || !terminal || now >= terminal.repeatUntil) {
+      this.clearTurnState(sequenceId);
+      return;
+    }
+
+    const nextRepeatAt = now + ntfyTerminalRepeatIntervalMs;
+    if (nextRepeatAt >= terminal.repeatUntil) {
+      this.clearTurnState(sequenceId);
+      return;
+    }
+
+    this.enqueue(terminal.payload, true, true, nextRepeatAt);
+  }
+
+  private terminalRepeatIsActive(sequenceId: string, now: number) {
+    const terminal = this.turns.get(sequenceId)?.terminal;
+    return Boolean(terminal && now < terminal.repeatUntil);
+  }
+
+  private clearTurnState(sequenceId: string) {
+    const state = this.turns.get(sequenceId);
+    if (!state) return;
+    if (state.progressTimer) this.clearTimer(state.progressTimer);
+    state.progressTimer = undefined;
+    state.queued = undefined;
+    this.turns.delete(sequenceId);
   }
 
   private rememberCompletedKey(key: string) {
@@ -312,12 +395,12 @@ const ntfyRetryDelayMs = (error: unknown, attempt: number, requestIntervalMs: nu
   return Math.max(requestIntervalMs, exponentialDelay, retryAfterMs);
 };
 
-const ntfyRetryAfterMs = (value: string | null) => {
+const ntfyRetryAfterMs = (value: string | null, now = Date.now()) => {
   if (!value?.trim()) return undefined;
   const seconds = Number(value);
   if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
   const at = Date.parse(value);
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : undefined;
+  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 };
 
 export const ntfyNotificationConfigFromEnv = (
@@ -381,6 +464,11 @@ const ntfyPriority = (status: NtfyNotificationStatus) => {
 const isNtfyTerminalStatus = (status: NtfyNotificationStatus) =>
   status === "completed" || status === "failed" || status === "cancelled";
 
+const ntfyActivityTitle = (thread: ThreadSummary, records: CodexRecord[]) => {
+  const title = taskActivityTitle(thread, records);
+  return thread.source === "cli" ? `[cli] ${title}` : title;
+};
+
 // Node's fetch rejects non-Latin-1 header values even though ntfy accepts
 // UTF-8 headers. RFC 2047 keeps Chinese titles intact across HTTP clients.
 const ntfyHeaderValue = (value: string) => /[^\x00-\x7f]/.test(value)
@@ -392,13 +480,14 @@ const runningNtfyPayload = (
   record: CodexRecord,
   records: CodexRecord[],
   sequenceId: string,
-  turnId: string
+  turnId: string,
+  now: number
 ): NtfyNotificationPayload => {
   const startedAt = thread.activeTurnStartedAt ?? taskStartedAt(records, turnId);
-  const elapsedMs = startedAt ? Math.max(0, Date.now() - Date.parse(startedAt)) : undefined;
+  const elapsedMs = startedAt ? Math.max(0, now - Date.parse(startedAt)) : undefined;
   const progress = latestPlanProgress(records, turnId);
   const needsInput = hasPendingNtfyInteraction(records);
-  const activityTitle = taskActivityTitle(thread, records);
+  const activityTitle = ntfyActivityTitle(thread, records);
   const directoryName = thread.workingDirectory.split(/[\\/]/).filter(Boolean).pop() || "";
   const stateLabel = needsInput ? "等待输入" : "运行中";
   return {
@@ -437,7 +526,7 @@ const terminalNtfyPayload = (
       type: "task_lifecycle",
       status: "completed",
       sequenceId,
-      title: notification.title,
+      title: ntfyActivityTitle(thread, records),
       body: notification.body,
       threadId: thread.threadId,
       ...(thread.runtime.machineId ? { machineId: thread.runtime.machineId } : {}),
@@ -461,7 +550,7 @@ const terminalNtfyPayload = (
     type: "task_lifecycle",
     status: interrupted ? "cancelled" : "failed",
     sequenceId,
-    title: taskActivityTitle(thread, records),
+    title: ntfyActivityTitle(thread, records),
     body: notificationText([
       directoryName,
       [stateLabel, duration ? `用时 ${duration}` : null, reason]
