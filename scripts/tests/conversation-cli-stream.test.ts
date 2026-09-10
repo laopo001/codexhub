@@ -44,11 +44,11 @@ test("start text arrives live, preserves stdin/options, and ignores history", { 
     assert.match(output.value, /Thread ID: stream-thread/);
     assert.match(output.value, /\[commentary\][\s\S]*live commentary/);
     assert.match(output.value, /\[final_answer\][\s\S]*live final/);
-    assert.match(output.value, /\[tool_call\] exec_command/);
+    assert.match(output.value, /\[tool_call\] id: [^\n]+\nexec_command/);
     assert.doesNotMatch(output.value, /\[tool_result\]/);
-    assert.match(output.value, /\[tool_call\] apply_patch/);
+    assert.match(output.value, /\[tool_call\] id: [^\n]+\napply_patch/);
     assert.match(output.value, /\[error\][\s\S]*visible stream error/);
-    assert.match(output.value, /\[tool_call\]\nuser_input_request[\s\S]*Need input/);
+    assert.match(output.value, /\[tool_call\] id: [^\n]+\nuser_input_request[\s\S]*Need input/);
     assert.doesNotMatch(output.value, /output-\d+/);
     assert.doesNotMatch(output.value, /historical answer/);
     assert.equal(fixture.turnBody.input, "first line\nsecond line\n");
@@ -327,7 +327,7 @@ test("normal renderer prints a shell command once and suppresses its successful 
 
   const rendered = chunks.join("");
   assert.equal((rendered.match(/command: echo ok/g) ?? []).length, 1);
-  assert.match(rendered, /\[tool_call\] exec_command · cwd: \/workspace · command: echo ok/);
+  assert.match(rendered, /\[tool_call\] id: shell-once\nexec_command · cwd: \/workspace · command: echo ok/);
   assert.doesNotMatch(rendered, /\[tool_result\]/);
   assert.doesNotMatch(rendered, /final output/);
 });
@@ -652,7 +652,7 @@ test("function call/output correlate once without treating call completion as to
   for (const id of ["result1", "result2"]) emit(id, { type: "function_call_output", call_id: "f1", output: "private success body", status: "completed" });
   assert.equal((output.match(/\[tool_call\]/g) ?? []).length, 1);
   assert.equal((output.match(/\[tool_result\]/g) ?? []).length, 0);
-  assert.match(output, /\[tool_call\] exec_command · cwd: \/workspace · command: pnpm test/);
+  assert.match(output, /\[tool_call\] id: f1\nexec_command · cwd: \/workspace · command: pnpm test/);
   assert.doesNotMatch(output, /private success body/);
 });
 
@@ -664,7 +664,7 @@ test("MCP and dynamic tools report real failures and supplied duration", () => {
   emit("mcp", { type: "mcp_tool_call", server: "docs", tool: "search", status: "completed", duration_ms: 1200, result: { isError: true, content: [{ type: "text", text: "search unavailable" }] } });
   emit("dynamic", { type: "function_call", call_id: "d", name: "clock", namespace: "functions", arguments: "{}", status: "completed", success: false, content_items: [{ type: "text", text: "clock unavailable" }] });
   assert.equal((output.match(/✗ 失败/g) ?? []).length, 2);
-  assert.match(output, /docs.search/);
+  assert.match(output, /\[tool_call\] id: mcp\ndocs.search/);
   assert.match(output, /1200ms/);
   assert.match(output, /search unavailable/);
   assert.match(output, /functions.clock/);
@@ -695,7 +695,7 @@ test("tool parameters are bounded, preserve cwd and redact common credentials", 
   assert.match(output, /已截断/);
   assert.match(output, /REDACTED/);
   assert.doesNotMatch(output, /secret-(one|two|three|four|five)/);
-  const callLines = output.split("\n").filter((line) => line.startsWith("[tool_call] exec_command") || line.startsWith("[tool_call] request"));
+  const callLines = output.split("\n").filter((line) => line.startsWith("exec_command") || line.startsWith("request"));
   assert.ok(callLines.length === 2);
   assert.ok(callLines.every((line) => line.length <= 200));
   assert.ok(output.length < 700);
@@ -710,7 +710,7 @@ test("patch previews show paths instead of edit bodies", () => {
   }, "response_item") });
   assert.match(output, /src\/app.ts/);
   assert.doesNotMatch(output, /private edit body/);
-  assert.match(output, /\[tool_call\] apply_patch · \*\*\* Update File: src\/app.ts/);
+  assert.match(output, /\[tool_call\] id: patch\napply_patch · \*\*\* Update File: src\/app.ts/);
 });
 
 test("approval and user input requests keep complete multiline details while redacting them", () => {
@@ -726,10 +726,10 @@ test("approval and user input requests keep complete multiline details while red
     questions: [{ header: "Input", question: `${"question detail ".repeat(20)}question-tail`, options: null }]
   }, "response_item") });
 
-  assert.match(output, /\[tool_call\]\npermission_request\n/);
+  assert.match(output, /\[tool_call\] id: permission\npermission_request\n/);
   assert.match(output, /permission-tail/);
   assert.match(output, /scope/);
-  assert.match(output, /\[tool_call\]\nuser_input_request\n/);
+  assert.match(output, /\[tool_call\] id: [^\n]+\nuser_input_request\n/);
   assert.match(output, /question-tail/);
   assert.doesNotMatch(output, /secret-token/);
   assert.match(output, /REDACTED/);

@@ -25,9 +25,8 @@ const boundedText = (value: string, maxChars: number, maxLines: number, collapse
 };
 
 const compactToolCall = (name: string, parameters: string) => {
-  const label = "[tool_call] ";
   const content = `${name}${parameters ? ` · ${parameters}` : ""}`;
-  return `${label}${boundedText(content, toolCallMaxChars - label.length, 1, true)}`;
+  return boundedText(content, toolCallMaxChars, 1, true);
 };
 
 // CLI summaries are bounded; full details remain in the Web inspector.
@@ -56,7 +55,9 @@ export const toolPresentation = (view: CodexRecordView) => {
     : type === "file_change" ? "apply_patch"
     : type === "collab_agent_tool_call" ? String(p.tool ?? "agent")
     : String(p.name ?? p.tool ?? type);
-  const key = typeof p.call_id === "string" && p.call_id ? `call:${p.call_id}` : `record:${view.id}`;
+  const callId = typeof p.call_id === "string" && p.call_id ? p.call_id : undefined;
+  const key = callId ? `call:${callId}` : `record:${view.id}`;
+  const displayId = sanitizeText(callId ?? view.id).replace(/\s+/g, " ").trim();
   let parameters: string;
   if (type === "local_shell_call") {
     const command = Array.isArray(action.command) ? action.command.map(text).join(" ") : text(action.command ?? p.command);
@@ -107,9 +108,10 @@ export const toolPresentation = (view: CodexRecordView) => {
   const summary = `${failed ? "✗ 失败" : "✓ 完成"}${exitCode !== undefined && exitCode !== -1 ? ` · exit ${exitCode}` : ""}${duration !== undefined ? ` · ${formatMilliseconds(duration)}` : ""}`;
   const diagnostic = failed ? toolSummaryText(text(output ?? view.text), failureDiagnosticMaxChars, failureDiagnosticMaxLines) : "";
   const displayName = boundedText(name, 120, 1, true);
-  const call = interactiveRequest
+  const details = interactiveRequest
     ? `${displayName}${parameters ? `\n${parameters}` : ""}`
     : compactToolCall(displayName, parameters);
-  return { key, name: displayName, outputOnly, call, fullRequest: interactiveRequest, terminal, failed,
+  const call = `[tool_call] id: ${displayId}\n${details}`;
+  return { key, name: displayName, outputOnly, call, terminal, failed,
     result: `${summary}${diagnostic ? `\n${diagnostic}` : ""}` };
 };
