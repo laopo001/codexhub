@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { emptyThreadUsage } from "../../src/core/threadUsage.js";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
+import { modelCascaderOptionsForSelection } from "../../src/web/helpers/core.js";
 import type { OpenThreadState } from "../../src/web/types.js";
 
 const childThreadId = "019fc297-cc2c-7cc3-bccc-4dea01abcd42";
@@ -181,13 +182,13 @@ test("thread model fields edit the target thread drafts and retain the default o
     readFile(new URL("../../src/web/styles/responsive.css", import.meta.url), "utf8")
   ]);
 
-  assert.match(dialogsSource, /value=\{threadModelDialogModelSelection\}/);
-  assert.match(dialogsSource, /value=\{threadModelDialogReasoningSelection\}/);
+  assert.match(dialogsSource, /<Cascader/);
+  assert.match(dialogsSource, /value=\{threadModelCascaderValue\}/);
+  assert.match(dialogsSource, /options=\{dialogModelCascaderOptions\}/);
+  assert.match(dialogsSource, /modelCascaderOptionsForSelection\(/);
   assert.match(dialogsSource, /value=\{threadModelDialogServiceTierSelection\}/);
   assert.match(dialogsSource, /<span>Response speed<\/span>/);
   assert.match(dialogsSource, /options=\{serviceTierOptions\.map/);
-  assert.match(dialogsSource, /optionsWithoutAutoWhenResolved\(modelOptions, threadModelDialogModelSelection\)/);
-  assert.match(dialogsSource, /optionsWithoutAutoWhenResolved\(reasoningOptions, threadModelDialogReasoningSelection\)/);
   assert.match(
     selectorsSource,
     /serviceTierOptionsForSelection\(\s*threadModelDialogServiceTierDraft,\s*activeModelCatalog,\s*threadModelDialogModelSelection/
@@ -195,6 +196,50 @@ test("thread model fields edit the target thread drafts and retain the default o
   assert.match(cssBlock(modalsCss, ".sessionDialog"), /max-height:\s*calc\(100svh - 48px\)/);
   assert.match(cssBlock(modalsCss, ".sessionDialog"), /overflow-y:\s*auto/);
   assert.match(responsiveCss, /\.projectPickerModal,\s*\.sessionDialog,\s*\.settingsDialog,/);
+});
+
+test("modelCascaderOptionsForSelection builds cascade options for model and reasoning", () => {
+  const modelOptions = [
+    { value: "auto", label: "Default (auto)" },
+    { value: "o3-mini", label: "o3-mini" },
+    { value: "gpt-4o", label: "gpt-4o" }
+  ];
+  const catalog = [
+    {
+      id: "o3-mini",
+      name: "o3-mini",
+      description: "Fast reasoning model",
+      supportedReasoningEfforts: [
+        { value: "low", label: "Low", description: "Fastest" },
+        { value: "medium", label: "Medium", description: "Balanced" },
+        { value: "high", label: "High", description: "Deep thinking" }
+      ],
+      defaultReasoningEffort: "medium",
+      supportedServiceTiers: ["default"],
+      defaultServiceTier: "default"
+    }
+  ];
+
+  const cascaderOptions = modelCascaderOptionsForSelection(modelOptions, "auto", "auto", catalog as any);
+  assert.equal(cascaderOptions.length, 3);
+  assert.equal(cascaderOptions[0].value, "auto");
+  assert.equal(cascaderOptions[1].value, "o3-mini");
+  assert.equal(cascaderOptions[1].children?.length, 4); // auto + low, medium, high
+  assert.deepEqual(
+    cascaderOptions[1].children?.map((c) => c.value),
+    ["auto", "low", "medium", "high"]
+  );
+
+  // When a model is selected (not "auto"), "auto" model option is hidden
+  const resolvedModelOptions = modelCascaderOptionsForSelection(modelOptions, "o3-mini", "medium", catalog as any);
+  assert.equal(resolvedModelOptions.length, 2);
+  assert.equal(resolvedModelOptions.find((opt) => opt.value === "auto"), undefined);
+  const selectedModel = resolvedModelOptions.find((opt) => opt.value === "o3-mini");
+  // When reasoning is selected (not "auto"), "auto" reasoning option is hidden
+  assert.deepEqual(
+    selectedModel?.children?.map((c) => c.value),
+    ["low", "medium", "high"]
+  );
 });
 
 test("workspace and subagent model entries always bind the visible thread id", async () => {

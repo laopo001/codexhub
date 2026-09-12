@@ -542,6 +542,7 @@ export const useAppSelectors = (state: AppState) => {
     activePermissionProfiles,
     activePermissionProfilesError,
     activePermissionProfilesStatus,
+    activeModelCatalog,
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,

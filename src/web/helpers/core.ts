@@ -1139,6 +1139,49 @@ export const reasoningOptionsForSelection = (
   return ensureOption(options, reasoning);
 };
 
+export type ModelCascaderOption = {
+  value: string;
+  label: string;
+  searchText?: string;
+  children: Array<{
+    value: string;
+    label: string;
+    description?: string;
+  }>;
+};
+
+export const modelCascaderOptionsForSelection = (
+  modelOptions: Array<{ value: string; label: string; searchText?: string }>,
+  currentModel: ModelSelection,
+  currentReasoning: ReasoningSelection,
+  catalog: ModelCatalogItem[] = []
+): ModelCascaderOption[] => {
+  const dialogModelOptions = currentModel === "auto"
+    ? modelOptions
+    : modelOptions.filter((option) => option.value !== "auto");
+  return dialogModelOptions.map((modelOption) => {
+    const isCurrentModel = modelOption.value === currentModel;
+    const rawReasoning = reasoningOptionsForSelection(
+      isCurrentModel ? currentReasoning : "auto",
+      catalog,
+      modelOption.value
+    );
+    const reasoningOpts = isCurrentModel && currentReasoning !== "auto"
+      ? rawReasoning.filter((option) => option.value !== "auto")
+      : rawReasoning;
+    return {
+      value: modelOption.value,
+      label: modelOptionLabel(modelOption),
+      searchText: modelOption.searchText,
+      children: reasoningOpts.map((rOpt) => ({
+        value: rOpt.value,
+        label: reasoningOptionLabel(rOpt),
+        ...(rOpt.description ? { description: rOpt.description } : {})
+      }))
+    };
+  });
+};
+
 export const modelSupportsReasoningEffort = (
   catalog: ModelCatalogItem[],
   model: ModelSelection,

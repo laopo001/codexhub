@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, Select, Switch } from "antd";
+import { Cascader, Modal, Select, Switch } from "antd";
 import { Check, ChevronRight, Copy, Download, ExternalLink, Target, X } from "lucide-react";
 import { isVscodeSurface } from "./appConfig.js";
 import {
@@ -10,10 +10,9 @@ import {
   formatThreadCandidateTime,
   machineProjectCatalogEditable,
   machineProjectLauncher,
-  modelOptionLabel,
+  modelCascaderOptionsForSelection,
   modelOptionSearchMatches,
   primeTaskNotificationPermission,
-  reasoningOptionLabel,
   serviceTierOptionLabel,
   shortId,
   statusLabel,
@@ -63,6 +62,7 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     loadThreadPickerCandidates,
     machines,
     messageSelectionToolbar,
+    activeModelCatalog,
     activeModelCatalogCacheNotice,
     activeModelCatalogError,
     activeModelCatalogStatus,
@@ -70,7 +70,6 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     threadModelDialogReasoningSelection,
     threadModelDialogServiceTierSelection,
     modelOptions,
-    reasoningOptions,
     serviceTierOptions,
     onlineMachines,
     openingProjectKey,
@@ -266,6 +265,22 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
     setThreadModelDialogOpen,
     threadModelDialogOpen
   ]);
+
+  const dialogModelCascaderOptions = React.useMemo(
+    () =>
+      modelCascaderOptionsForSelection(
+        modelOptions,
+        threadModelDialogModelSelection,
+        threadModelDialogReasoningSelection,
+        activeModelCatalog
+      ),
+    [modelOptions, threadModelDialogModelSelection, threadModelDialogReasoningSelection, activeModelCatalog]
+  );
+  const threadModelCascaderValue = React.useMemo(
+    () => [threadModelDialogModelSelection, threadModelDialogReasoningSelection],
+    [threadModelDialogModelSelection, threadModelDialogReasoningSelection]
+  );
+
   if (!hasOpenDialog) return null;
 
   const projectPickerMachine = projectPicker
@@ -310,19 +325,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
   const threadTabContextThread = threadTabContextMenu
     ? openThreads.find((thread) => thread.threadId === threadTabContextMenu.threadId)
     : undefined;
-  const dialogModelOptions = optionsWithoutAutoWhenResolved(modelOptions, threadModelDialogModelSelection);
-  const dialogReasoningOptions = optionsWithoutAutoWhenResolved(reasoningOptions, threadModelDialogReasoningSelection);
   const worktreePreview = threadPicker
     ? worktreeTargetPreview(threadPicker.workingDirectory, threadPicker.worktreeBranch, threadPicker.worktreePath)
     : "";
-  const dialogModelSelectOptions = dialogModelOptions.map((option) => ({
-    ...option,
-    label: modelOptionLabel(option)
-  }));
-  const dialogReasoningSelectOptions = dialogReasoningOptions.map((option) => ({
-    ...option,
-    label: reasoningOptionLabel(option)
-  }));
   const modelCatalogLoading = activeModelCatalogStatus === "idle" || activeModelCatalogStatus === "loading";
   const modelCatalogError = activeModelCatalogStatus === "error";
   const modelCatalogNotice = activeModelCatalogStatus === "unavailable"
@@ -347,28 +352,28 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
               <button type="button" className="iconButton" onClick={() => setThreadModelDialogOpen(false)} aria-label="Close">x</button>
             </header>
             <label className="sessionDialogField">
-              <span>Model</span>
-              <Select
+              <span>Model / Thinking</span>
+              <Cascader
                 className="threadModelSelect"
-                showSearch
-                value={threadModelDialogModelSelection}
-                options={dialogModelSelectOptions}
+                value={threadModelCascaderValue}
+                options={dialogModelCascaderOptions}
+                changeOnSelect
                 disabled={threadModelSelectDisabled}
                 loading={modelCatalogLoading}
-                filterOption={(input, option) => modelOptionSearchMatches(selectOptionSearchPayload(option), input)}
-                onChange={(value) => setThreadModelDialogModelDraft(value as ModelSelection)}
-              />
-            </label>
-            <label className="sessionDialogField">
-              <span>Thinking</span>
-              <Select
-                className="threadModelSelect"
-                value={threadModelDialogReasoningSelection}
-                options={dialogReasoningSelectOptions}
-                disabled={threadModelSelectDisabled}
-                loading={modelCatalogLoading}
-                virtual={false}
-                onChange={(value) => setThreadModelDialogReasoningDraft(value as ReasoningSelection)}
+                showSearch={{
+                  filter: (inputValue, path) =>
+                    path.some((option) =>
+                      modelOptionSearchMatches(selectOptionSearchPayload(option), inputValue)
+                    )
+                }}
+                displayRender={(labels) => labels.join(" / ")}
+                onChange={(values) => {
+                  if (!values || values.length === 0) return;
+                  const nextModel = values[0] as ModelSelection | undefined;
+                  const nextReasoning = values[1] as ReasoningSelection | undefined;
+                  if (nextModel) setThreadModelDialogModelDraft(nextModel);
+                  if (nextReasoning) setThreadModelDialogReasoningDraft(nextReasoning);
+                }}
               />
             </label>
             <label className="sessionDialogField">
@@ -1222,9 +1227,6 @@ const isLocalAbsolutePath = (value?: string | null): boolean => {
   if (!value) return false;
   return value.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(value);
 };
-
-const optionsWithoutAutoWhenResolved = <T extends { value: string; label: string }>(options: T[], value: string) =>
-  value === "auto" ? options : options.filter((option) => option.value !== "auto");
 
 const selectOptionSearchPayload = (option: unknown) => {
   const record = option as { value?: unknown; label?: unknown; searchText?: unknown } | undefined;

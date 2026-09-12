@@ -28,6 +28,7 @@ import type {
   MachineSummary,
   MessageSelectionToolbarState,
   MessageRenderMode,
+  ModelCatalogItem,
   ModelSelection,
   ParentRegistrationStatus,
   ProjectMachineGroup,
@@ -230,6 +231,7 @@ export type AppViewModelSource = AppSidebarViewModel & AppTaskDialogViewModel & 
   activePermissionProfilesError: string;
   activePermissionProfilesStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
   permissionProfilesByScope: Record<string, PermissionProfileCatalogLoadState>;
+  activeModelCatalog: ModelCatalogItem[];
   activeModelCatalogCacheNotice: string;
   activeModelCatalogError: string;
   activeModelCatalogStatus: "unavailable" | "idle" | "loading" | "ready" | "error";
@@ -475,6 +477,7 @@ export type AppDialogsViewModel = Pick<AppViewModelSource,
   | "disconnectParentRegistration"
   | "localMachines"
   | "messageSelectionToolbar"
+  | "activeModelCatalog"
   | "activeModelCatalogCacheNotice"
   | "activeModelCatalogError"
   | "activeModelCatalogStatus"
@@ -604,7 +607,7 @@ const dialogKeys = [
   "loadProjectPickerDirectory", "loadCommandPalette", "loadThreadPickerCandidates", "selectThreadPickerWorkingDirectory", "machines", "messageSelectionToolbar",
   "addSshHost", "connectionMode", "connectParentRegistration", "connectSshHost", "copyCurrentServerShareUrl",
   "copyRegisteredCommand", "currentServerShareUrl", "disconnectParentRegistration", "localMachines",
-  "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",
+  "activeModelCatalog", "activeModelCatalogCacheNotice", "activeModelCatalogError", "activeModelCatalogStatus", "threadModelDialogModelSelection",
   "threadModelDialogReasoningSelection", "threadModelDialogServiceTierSelection", "modelOptions", "reasoningOptions",
   "serviceTierOptions", "onlineMachines", "openingProjectKey", "projectPicker", "retryModelCatalog",
   "saveGoalDialog", "saveThreadRenameDialog", "threadModelDialogOpen", "threadRenameDialog",
