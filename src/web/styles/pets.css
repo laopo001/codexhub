@@ -139,6 +139,10 @@
   animation: petTrayIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.petOverlay[data-tray-horizontal="center"] .petActivityTray {
+  left: calc(50% - 155px);
+}
+
 .petOverlay[data-tray-horizontal="left"] .petActivityTray {
   left: 0;
 }

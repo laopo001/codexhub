@@ -14,7 +14,13 @@ import {
   type PetAnimationState,
   type PetLookCell,
 } from "./petAtlas.js";
-import { clampPetPosition, defaultPetPosition, type PetPosition, type PetSize } from "./petMotion.js";
+import {
+  calculatePetTrayLayout,
+  clampPetPosition,
+  defaultPetPosition,
+  type PetPosition,
+  type PetSize,
+} from "./petMotion.js";
 import type { PetDefinition } from "./petStore.js";
 import {
   petAnimationForPresentation,
@@ -203,6 +209,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       ? clampPetPosition(controller.position, viewport, size)
       : defaultPetPosition(viewport, viewport.width <= 700);
   }, [controller.position]);
+  const [viewport, setViewport] = React.useState(viewportSize);
   const [position, setPosition] = React.useState(initialPosition);
   const positionRef = React.useRef(position);
   const [dragDirection, setDragDirection] = React.useState<PetDragDirection>(null);
@@ -220,7 +227,11 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
 
   React.useEffect(() => {
     const handleResize = () => {
-      const next = clampPetPosition(positionRef.current, viewportSize(), petSizeForViewport());
+      const nextViewport = viewportSize();
+      setViewport((current) => current.width === nextViewport.width && current.height === nextViewport.height
+        ? current
+        : nextViewport);
+      const next = clampPetPosition(positionRef.current, nextViewport, petSizeForViewport());
       updateRenderedPosition(next);
       if (controller.position && !samePosition(controller.position, next)) controller.setPosition(next);
     };
@@ -382,10 +393,9 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
 
   if (!controller.enabled) return null;
   const activeActivities = controller.activities.filter((activity) => activity.status !== "idle");
-  const viewport = viewportSize();
   const petSize = petSizeForViewport();
   const trayVertical = position.y + petSize.height / 2 > viewport.height / 2 ? "above" : "below";
-  const trayHorizontal = position.x + petSize.width / 2 > viewport.width / 2 ? "right" : "left";
+  const trayLayout = calculatePetTrayLayout(position, viewport, petSize);
   const openActivity = (activity: PetActivity) => {
     if (desktopPetWindow) {
       window.codexhubElectronPet?.openPetActivity?.({
@@ -409,13 +419,17 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       data-completion-phase={controller.completionPhase}
       data-dragging={dragDirection ? "true" : "false"}
       data-status={controller.status}
-      data-tray-horizontal={trayHorizontal}
+      data-tray-horizontal={trayLayout.horizontal}
       data-tray-vertical={trayVertical}
       style={{ left: position.x, top: position.y }}
       aria-live="polite"
     >
       {controller.trayOpen ? (
-        <section className="petActivityTray" aria-label="Codex activity">
+        <section
+          className="petActivityTray"
+          aria-label="Codex activity"
+          style={{ left: trayLayout.offsetLeft }}
+        >
           <header>
             <div>
               <strong>Codex activity</strong>

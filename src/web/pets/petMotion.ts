@@ -27,3 +27,38 @@ export const defaultPetPosition = (viewport: PetSize, compact: boolean): PetPosi
     y: viewport.height - pet.height - bottom,
   }, viewport, pet);
 };
+
+export type PetTrayHorizontalAlignment = "center" | "left" | "right";
+
+export type PetTrayLayout = {
+  horizontal: PetTrayHorizontalAlignment;
+  offsetLeft: number;
+  width: number;
+};
+
+export const calculatePetTrayLayout = (
+  petPosition: PetPosition,
+  viewport: PetSize,
+  petSize: PetSize,
+  preferredWidth = 310,
+  viewportMargin = 12
+): PetTrayLayout => {
+  const width = Math.min(preferredWidth, Math.max(0, viewport.width - 32));
+  const petCenterX = petPosition.x + petSize.width / 2;
+  const idealLeft = petCenterX - width / 2;
+  const margin = Math.min(viewportMargin, Math.max(0, (viewport.width - width) / 2));
+  const maxLeft = Math.max(margin, viewport.width - width - margin);
+  const clampedLeft = Math.max(margin, Math.min(maxLeft, idealLeft));
+  const offsetLeft = Math.round(clampedLeft - petPosition.x);
+  const horizontal: PetTrayHorizontalAlignment = clampedLeft === idealLeft
+    ? "center"
+    : clampedLeft > idealLeft
+      ? "left"
+      : "right";
+  return {
+    horizontal,
+    offsetLeft,
+    width,
+  };
+};
+
