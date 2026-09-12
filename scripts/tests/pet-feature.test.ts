@@ -11,7 +11,7 @@ import {
   petLookCellForVector,
 } from "../../src/web/pets/petAtlas.js";
 import { parsePetCommand } from "../../src/web/pets/petCommands.js";
-import { clampPetPosition, defaultPetPosition } from "../../src/web/pets/petMotion.js";
+import { calculatePetTrayLayout, clampPetPosition, defaultPetPosition } from "../../src/web/pets/petMotion.js";
 import {
   derivePetActivities,
   hasRunningPetThreads,
@@ -748,3 +748,72 @@ test("pet activity markup adds only a CLI badge while preserving state indicator
   assert.equal((html.match(/petActivityDot running/g) ?? []).length, 2);
   assert.doesNotMatch(html, /\[web\]/);
 });
+
+test("calculatePetTrayLayout centers the tray under the pet and clamps at viewport edges", () => {
+  const viewport = { width: 1280, height: 800 };
+  const petSize = { width: 126, height: 136 };
+
+  // 1. In normal position, tray is centered under pet: center offset = (126 - 310) / 2 = -92
+  const centeredLayout = calculatePetTrayLayout({ x: 500, y: 300 }, viewport, petSize);
+  assert.equal(centeredLayout.horizontal, "center");
+  assert.equal(centeredLayout.width, 310);
+  assert.equal(centeredLayout.offsetLeft, -92);
+  const petCenter = 500 + petSize.width / 2;
+  const trayCenter = 500 + centeredLayout.offsetLeft + centeredLayout.width / 2;
+  assert.equal(petCenter, trayCenter);
+
+  // 2. Near left edge: tray clamped to viewport margin (12px), does not overflow left
+  const leftClamped = calculatePetTrayLayout({ x: 8, y: 300 }, viewport, petSize);
+  assert.equal(leftClamped.horizontal, "left");
+  assert.equal(leftClamped.offsetLeft, 4); // 8 + 4 = 12px (left margin)
+  assert.equal(8 + leftClamped.offsetLeft, 12);
+
+  // 3. Near right edge: tray clamped to viewport right edge margin
+  const petRightEdgeX = viewport.width - petSize.width - 8;
+  const rightClamped = calculatePetTrayLayout({ x: petRightEdgeX, y: 300 }, viewport, petSize);
+  assert.equal(rightClamped.horizontal, "right");
+  const trayRight = petRightEdgeX + rightClamped.offsetLeft + rightClamped.width;
+  assert.equal(trayRight, viewport.width - 12);
+
+  // 4. Narrow viewport: width adapts to viewport.width - 32
+  const narrowViewport = { width: 300, height: 600 };
+  const compactPet = { width: 96, height: 104 };
+  const narrowLayout = calculatePetTrayLayout({ x: 100, y: 200 }, narrowViewport, compactPet);
+  assert.equal(narrowLayout.width, 268);
+});
+
+test("pet activity tray renders centered with inline offset", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PetOverlay } = await import("../../src/web/pets/PetFeature.js");
+  const activities = derivePetActivities([thread("thread-1", [], true)]);
+  const controller = {
+    enabled: true,
+    selectedPet: builtinPet,
+    status: "running",
+    activities,
+    trayOpen: true,
+    completionPhase: "none",
+    position: { x: 500, y: 300 },
+    setTrayOpen: () => {},
+    setPosition: () => {},
+    openPicker: () => {},
+  } as unknown as Parameters<typeof PetOverlay>[0]["controller"];
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { innerWidth: 1280, innerHeight: 800, location: { search: "" }, matchMedia: () => ({ matches: true }) }
+  });
+  let html: string;
+  try {
+    html = renderToStaticMarkup(createElement(PetOverlay, { controller, composerRecentlyChanged: false, onOpenThread: () => {} }));
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+
+  assert.match(html, /data-tray-horizontal="center"/);
+  assert.match(html, /style="left:-92px"/);
+});
+
