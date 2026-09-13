@@ -24,15 +24,16 @@ test("child backend owns remote steer execution completion even without parent t
   hub.registerSession({ sessionId: "child", machineId: "child-machine", workingDirectory: "/tmp" });
   hub.attachSessionThread("child", "thread", "/tmp");
   hub.applySessionEvent("child", executionChanged("thread", true, "child-active-turn"));
-  const dispatch = await hub.dispatchRemoteBackendCommand("child", {
+  const dispatchPromise = hub.dispatchRemoteBackendCommand("child", {
     commandId: "remote-guidance", type: "turn", threadId: "thread", input: "guidance",
     workingDirectory: "/tmp", createdAt: new Date().toISOString()
-  }) as { result: { delivery: string }; completion: Promise<void> };
-  assert.equal(dispatch.result.delivery, "steer");
+  });
   const batch = await hub.waitSessionCommands("child", 0, 1);
   const steer = batch.commands.find(command => command.type === "steer");
   assert.ok(steer);
   hub.resolveSessionCommand("child", steer.commandId, { turnId: "child-active-turn" });
+  const dispatch = await dispatchPromise as { result: { delivery: string }; completion: Promise<void> };
+  assert.equal(dispatch.result.delivery, "steer");
   let finished = false;
   void dispatch.completion.then(() => { finished = true; });
   await delay(10);

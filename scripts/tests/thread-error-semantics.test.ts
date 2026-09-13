@@ -37,6 +37,28 @@ const errorPayloads = (hub: ThreadHub, threadId: string) =>
     .filter((record) => record.type === "error")
     .map((record) => record.payload as Record<string, unknown>);
 
+const contextCompactionEvent = (
+  threadId: string,
+  turnId: string,
+  method: "item/started" | "item/completed",
+  status?: "inProgress" | "completed"
+) => ({
+  type: "thread_event" as const,
+  threadId,
+  message: {
+    method,
+    params: {
+      threadId,
+      turnId,
+      item: {
+        id: `context-compaction-${turnId}`,
+        type: "contextCompaction",
+        ...(status ? { status } : {})
+      }
+    }
+  }
+});
+
 test("new Turn is Waiting until app-server confirms its turnId", async () => {
   const { hub, sessionId, threadId } = createHub("waiting-turn");
   const running = hub.runTurn(threadId, "wait for app-server");
@@ -227,6 +249,123 @@ test("inactive steer rejection resumes the same input as the next Turn", async (
     hub.applySessionEvent(sessionId, turnCompleted(threadId, nextTurnId));
     await dispatch.completion;
   }
+});
+
+test("known context compaction queues messages and dispatches them once in FIFO order", async () => {
+  const { hub, sessionId, threadId } = createHub("known-compaction");
+  const compactingTurnId = "known-compaction-turn";
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, compactingTurnId));
+  hub.applySessionEvent(sessionId, contextCompactionEvent(threadId, compactingTurnId, "item/started"));
+
+  const first = hub.runTurnWithDelivery(
+    threadId,
+    "first after compaction",
+    "web",
+    { model: "first-model" },
+    "compaction-submission-1"
+  );
+  const second = hub.runTurnWithDelivery(
+    threadId,
+    "second after compaction",
+    "web",
+    { model: "second-model" },
+    "compaction-submission-2"
+  );
+  assert.equal(first.delivery, "queued");
+  assert.equal(second.delivery, "queued");
+  assert.deepEqual(hub.queuedTurnItems(threadId).map((item) => item.submissionId), [
+    "compaction-submission-1",
+    "compaction-submission-2"
+  ]);
+
+  hub.applySessionEvent(sessionId, contextCompactionEvent(threadId, compactingTurnId, "item/completed", "completed"));
+  assert.equal(hub.getThread(threadId)?.running, true);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, compactingTurnId);
+
+  const sameTurn = hub.runTurnWithDelivery(threadId, "still in the same turn", "web");
+  assert.equal(sameTurn.delivery, "steer");
+  const sameTurnCommand = await nextCommand(hub, sessionId);
+  assert.equal(sameTurnCommand.type, "steer");
+  assert.equal(sameTurnCommand.turnId, compactingTurnId);
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    commandId: sameTurnCommand.commandId,
+    message: { id: sameTurnCommand.commandId, result: { turnId: compactingTurnId } }
+  });
+  await sameTurn.completion;
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, compactingTurnId));
+  const firstCommand = await nextCommand(hub, sessionId, sameTurnCommand.seq);
+  assert.equal(firstCommand.type, "turn");
+  assert.equal(firstCommand.input, "first after compaction");
+  assert.equal(firstCommand.submissionId, "compaction-submission-1");
+  assert.equal(firstCommand.options?.model, "first-model");
+
+  // A duplicate terminal/idle signal for the old Turn cannot dispatch the
+  // queued successor a second time.
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, compactingTurnId));
+  hub.applySessionEvent(sessionId, executionChanged(threadId, false));
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+
+  const firstTurnId = "known-compaction-next-1";
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, firstTurnId));
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, firstTurnId));
+  const secondCommand = await nextCommand(hub, sessionId, firstCommand.seq);
+  assert.equal(secondCommand.type, "turn");
+  assert.equal(secondCommand.input, "second after compaction");
+  assert.equal(secondCommand.submissionId, "compaction-submission-2");
+  assert.equal(secondCommand.options?.model, "second-model");
+
+  const secondTurnId = "known-compaction-next-2";
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, secondTurnId));
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, secondTurnId));
+  await Promise.all([first.completion, second.completion]);
+  assert.equal(hub.getThread(threadId)?.running, false);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+  assert.deepEqual(hub.queuedTurnItems(threadId), []);
+  assert.deepEqual(errorPayloads(hub, threadId), []);
+});
+
+test("cannot steer a compact Turn falls back to a queued delivery acknowledgement", async () => {
+  const { hub, sessionId, threadId } = createHub("compact-steer-race");
+  const compactingTurnId = "compact-steer-race-turn";
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, compactingTurnId));
+
+  const dispatch = hub.runTurnWithDelivery(
+    threadId,
+    "race-safe input",
+    "web",
+    { model: "race-model" },
+    "race-submission"
+  );
+  assert.equal(dispatch.delivery, "steer");
+  const steerCommand = await nextCommand(hub, sessionId);
+  assert.equal(steerCommand.type, "steer");
+
+  hub.applySessionEvent(sessionId, contextCompactionEvent(threadId, compactingTurnId, "item/started"));
+  hub.failSessionCommand(sessionId, steerCommand.commandId, "cannot steer a compact turn");
+  await dispatch.deliveryAcknowledgement;
+  assert.equal(dispatch.delivery, "queued");
+  assert.equal(hub.getThread(threadId)?.running, true);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, compactingTurnId);
+  assert.deepEqual(hub.queuedTurnItems(threadId).map((item) => item.submissionId), ["race-submission"]);
+  assert.deepEqual(errorPayloads(hub, threadId), []);
+
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, compactingTurnId));
+  const turnCommand = await nextCommand(hub, sessionId, steerCommand.seq);
+  assert.equal(turnCommand.type, "turn");
+  assert.equal(turnCommand.input, "race-safe input");
+  assert.equal(turnCommand.submissionId, "race-submission");
+  assert.equal(turnCommand.options?.model, "race-model");
+
+  const nextTurnId = "compact-steer-race-next";
+  hub.applySessionEvent(sessionId, executionChanged(threadId, true, nextTurnId));
+  hub.applySessionEvent(sessionId, turnCompleted(threadId, nextTurnId));
+  await dispatch.completion;
+  assert.equal(hub.getThread(threadId)?.running, false);
+  assert.equal(hub.getThread(threadId)?.activeTurnId, undefined);
+  assert.deepEqual(errorPayloads(hub, threadId), []);
 });
 
 test("thread queue exposes stable FIFO identities and cancels only queued submissions", async () => {

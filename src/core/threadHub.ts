@@ -294,7 +294,7 @@ export class ThreadHub {
     }
     const thread = this.threads.get(pending.threadId);
     if (pending.type === "steer") {
-      if (thread && pending.input !== undefined && inactiveTurnSteerError(message)) {
+      if (thread && pending.input !== undefined && retryableSteerError(message)) {
         this.retryInactiveSteerAsNextTurn(commandId, pending, thread);
         return { ok: true, sessionId, commandId };
       }
@@ -685,6 +685,7 @@ export class ThreadHub {
         const localCommand = this.runLocalCommand(threadId, command.input, command.source ?? "web");
         if (localCommand.handled) return { result: localCommand, completion: Promise.resolve() };
         const dispatch = this.runTurnWithDelivery(threadId, command.input, command.source ?? "web", command.options, command.submissionId);
+        if (dispatch.deliveryAcknowledgement) await dispatch.deliveryAcknowledgement;
         return {
           result: { submissionId: dispatch.submissionId, delivery: dispatch.delivery },
           completion: dispatch.waitForExecutionCompletion?.() ?? dispatch.completion
@@ -695,6 +696,7 @@ export class ThreadHub {
         const localCommand = this.runLocalCommand(threadId, command.input, command.source ?? "web");
         if (localCommand.handled) return { result: localCommand, completion: Promise.resolve() };
         const dispatch = this.runTurnWithDelivery(threadId, command.input, command.source ?? "web", command.options, command.submissionId);
+        if (dispatch.deliveryAcknowledgement) await dispatch.deliveryAcknowledgement;
         return {
           result: { submissionId: dispatch.submissionId, delivery: dispatch.delivery },
           completion: dispatch.waitForExecutionCompletion?.() ?? dispatch.completion
@@ -1811,9 +1813,11 @@ export class ThreadHub {
           state.delivery = ack.delivery;
         }
       });
+      void deliveryAcknowledgement.catch(() => undefined);
       const completion = deliveryAcknowledgement.then(() => remote.waitForCompletion
         ? remote.waitForCompletion(session.sessionId, command.commandId)
         : undefined);
+      void completion.catch(() => undefined);
       return {
         get submissionId() { return state.submissionId; },
         get delivery() { return state.delivery; },
@@ -1829,14 +1833,49 @@ export class ThreadHub {
     }
     if (thread.running && (_source === "web" || _source === "cli") && thread.appServerTurnId) {
       const targetTurnId = thread.appServerTurnId;
+      if (appServerTurnIsCompacting(thread, targetTurnId)) {
+        return turnDispatch(
+          submissionId,
+          "queued",
+          () => this.queueTurn(thread, input, _source, options, submissionId, submissionCreatedAt)
+        );
+      }
+      const deliveryState = { value: "steer" as ThreadTurnDelivery };
+      let resolveDeliveryAcknowledgement!: () => void;
+      let rejectDeliveryAcknowledgement!: (error: Error) => void;
+      const deliveryAcknowledgement = new Promise<void>((resolve, reject) => {
+        resolveDeliveryAcknowledgement = resolve;
+        rejectDeliveryAcknowledgement = reject;
+      });
+      void deliveryAcknowledgement.catch(() => undefined);
       const dispatch = turnDispatch(
         submissionId,
         "steer",
-        () => this.steerTurn(thread, input, targetTurnId, _source, options, submissionId, submissionCreatedAt),
-        (error) => this.appendSubmissionFailedRecord(thread, input, error)
+        () => this.steerTurn(
+          thread,
+          input,
+          targetTurnId,
+          _source,
+          options,
+          submissionId,
+          submissionCreatedAt,
+          {
+            onDeliveryAcknowledged: (delivery) => {
+              deliveryState.value = delivery;
+              resolveDeliveryAcknowledgement();
+            },
+            onDeliveryFailed: rejectDeliveryAcknowledgement
+          }
+        ),
+        (error) => {
+          rejectDeliveryAcknowledgement(error);
+          this.appendSubmissionFailedRecord(thread, input, error);
+        },
+        { deliveryState, deliveryAcknowledgement }
       );
       return {
         ...dispatch,
+        get delivery() { return dispatch.delivery; },
         waitForExecutionCompletion: async () => {
           await dispatch.completion;
           await this.waitForTurnCompletion(thread.threadId, targetTurnId);
@@ -1851,7 +1890,7 @@ export class ThreadHub {
     return turnDispatch(
       submissionId,
       "turn",
-      () => this.startTurn(thread, input, _source, options),
+      () => this.startTurn(thread, input, _source, options, submissionId, submissionCreatedAt),
       (error) => this.appendSubmissionFailedRecord(thread, input, error)
     );
   }
@@ -1860,7 +1899,9 @@ export class ThreadHub {
     thread: ThreadState,
     input: ProxyInput,
     _source: ThreadInputSource = "web",
-    options?: ThreadRunOptions
+    options?: ThreadRunOptions,
+    submissionId?: string,
+    submissionCreatedAt?: string
   ) {
     if (thread.running) throw new Error(`Thread is already running: ${thread.threadId}`);
     const session = this.requireThreadSession(thread);
@@ -1872,6 +1913,8 @@ export class ThreadHub {
     const pending = this.pendingCommands.get(commandId);
     if (pending) {
       pending.input = input;
+      pending.submissionId = submissionId;
+      pending.submissionCreatedAt = submissionCreatedAt;
       pending.knownAppServerTurnIds = new Set(appServerTurnIds(thread));
     }
     this.activeTurnCommands.set(thread.threadId, commandId);
@@ -1903,7 +1946,8 @@ export class ThreadHub {
       input,
       threadId: thread.threadId,
       source: _source,
-      options: commandOptions
+      options: commandOptions,
+      ...(submissionId ? { submissionId } : {})
     });
     return promise;
   }
@@ -1915,7 +1959,11 @@ export class ThreadHub {
     source: ThreadInputSource,
     options: ThreadRunOptions | undefined,
     submissionId: string,
-    submissionCreatedAt: string
+    submissionCreatedAt: string,
+    deliveryCallbacks?: {
+      onDeliveryAcknowledged: (delivery: "steer" | "turn" | "queued") => void;
+      onDeliveryFailed: (error: Error) => void;
+    }
   ) {
     const session = this.requireThreadSession(thread);
     const commandId = randomUUID();
@@ -1927,6 +1975,8 @@ export class ThreadHub {
       pending.source = source;
       pending.submissionId = submissionId;
       pending.submissionCreatedAt = submissionCreatedAt;
+      pending.onDeliveryAcknowledged = deliveryCallbacks?.onDeliveryAcknowledged;
+      pending.onDeliveryFailed = deliveryCallbacks?.onDeliveryFailed;
     }
     this.enqueueSessionCommand(session.sessionId, {
       commandId,
@@ -1949,20 +1999,34 @@ export class ThreadHub {
     if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
     let completion: Promise<void>;
+    let delivery: "turn" | "queued";
     try {
-      completion = thread.running
-        ? this.queueTurn(
+      if (thread.running) {
+        delivery = "queued";
+        completion = this.queueTurn(
           thread,
           pending.input!,
           pending.source ?? "web",
           pending.turnOptions,
           pending.submissionId ?? randomUUID(),
           pending.submissionCreatedAt ?? new Date().toISOString()
-        )
-        : this.startTurn(thread, pending.input!, pending.source ?? "web", pending.turnOptions);
+        );
+      } else {
+        delivery = "turn";
+        completion = this.startTurn(
+          thread,
+          pending.input!,
+          pending.source ?? "web",
+          pending.turnOptions,
+          pending.submissionId,
+          pending.submissionCreatedAt
+        );
+      }
+      pending.onDeliveryAcknowledged?.(delivery);
     } catch (error) {
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       this.appendSubmissionFailedRecord(thread, pending.input, normalizedError);
+      pending.onDeliveryFailed?.(normalizedError);
       pending.reject(normalizedError);
       return;
     }
@@ -2266,6 +2330,7 @@ export class ThreadHub {
     return new Promise<T>((resolve, reject) => {
       const timer = typeof timeoutMs === "number" && timeoutMs > 0
         ? setTimeout(() => {
+          const pending = this.pendingCommands.get(commandId);
           this.pendingCommands.delete(commandId);
           this.pendingTurnSettingsCommits.delete(commandId);
           if (threadId && this.activeTurnCommands.get(threadId) === commandId) {
@@ -2278,7 +2343,9 @@ export class ThreadHub {
               this.publish(thread, "done");
             }
           }
-          reject(new Error(`Session command timed out: ${type}`));
+          const error = new Error(`Session command timed out: ${type}`);
+          pending?.onDeliveryFailed?.(error);
+          reject(error);
         }, timeoutMs)
         : undefined;
       this.pendingCommands.set(commandId, {
@@ -2314,6 +2381,7 @@ export class ThreadHub {
     if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
     this.commitPendingTurnSettings(commandId);
+    if (pending.type === "steer") pending.onDeliveryAcknowledged?.("steer");
     pending.resolve(value);
   }
 
@@ -2324,6 +2392,7 @@ export class ThreadHub {
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
     this.pendingCommands.delete(commandId);
+    pending.onDeliveryFailed?.(error);
     pending.reject(error);
   }
 
@@ -3713,7 +3782,8 @@ export class ThreadHub {
     }
     if (!queue.length) this.queuedTurns.delete(thread.threadId);
     try {
-      this.startTurn(thread, next.input, next.source, next.options).then(next.resolve, next.reject);
+      this.startTurn(thread, next.input, next.source, next.options, next.submissionId, next.createdAt)
+        .then(next.resolve, next.reject);
       return true;
     } catch (error) {
       const normalizedError = error instanceof Error ? error : new Error(String(error));
@@ -4142,18 +4212,33 @@ const turnDispatch = (
   submissionId: string,
   delivery: ThreadTurnDelivery,
   start: () => Promise<void>,
-  onSynchronousFailure?: (error: Error) => void
+  onSynchronousFailure?: (error: Error) => void,
+  options: {
+    deliveryState?: { value: ThreadTurnDelivery };
+    deliveryAcknowledgement?: Promise<void>;
+  } = {}
 ): ThreadTurnDispatch => {
+  const deliveryState = options.deliveryState ?? { value: delivery };
   try {
-    return { submissionId, delivery, accepted: true, completion: start() };
+    const completion = start();
+    void completion.catch(() => undefined);
+    return {
+      submissionId,
+      get delivery() { return deliveryState.value; },
+      accepted: true,
+      completion,
+      ...(options.deliveryAcknowledgement ? { deliveryAcknowledgement: options.deliveryAcknowledgement } : {})
+    };
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     onSynchronousFailure?.(normalizedError);
+    const completion = Promise.reject(normalizedError);
+    void completion.catch(() => undefined);
     return {
       submissionId,
-      delivery,
+      get delivery() { return deliveryState.value; },
       accepted: false,
-      completion: Promise.reject(normalizedError)
+      completion
     };
   }
 };
@@ -4162,6 +4247,23 @@ const compactThreadTitle = (value: string) => value.replace(/\s+/g, " ").trim().
 
 const inactiveTurnSteerError = (message: string) =>
   message.trim().toLowerCase() === "no active turn to steer";
+
+const compactTurnSteerError = (message: string) =>
+  message.trim().toLowerCase() === "cannot steer a compact turn";
+
+const retryableSteerError = (message: string) =>
+  inactiveTurnSteerError(message) || compactTurnSteerError(message);
+
+const appServerTurnIsCompacting = (thread: ThreadState, turnId: string) => {
+  for (let index = thread.records.length - 1; index >= 0; index -= 1) {
+    const record = thread.records[index];
+    if (turnIdFromRecord(record) !== turnId) continue;
+    const payload = asRecord(record.payload);
+    if (payload?.type !== "context_compaction") continue;
+    return payload.status === "in_progress" || payload.status === "inProgress";
+  }
+  return false;
+};
 
 const lightweightGenerationModel = "gpt-5.6-luna";
 

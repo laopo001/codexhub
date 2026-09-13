@@ -63,6 +63,8 @@ export type PendingCommand = {
   submissionId?: string;
   submissionCreatedAt?: string;
   knownAppServerTurnIds?: Set<string>;
+  onDeliveryAcknowledged?: (delivery: "steer" | "turn" | "queued") => void;
+  onDeliveryFailed?: (error: Error) => void;
   resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;

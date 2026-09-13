@@ -111,7 +111,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 
 1. Slash command 不按普通 Codex turn 透传。server 本地只处理 `/status`、`/help`、`/model`、`/fast on|off|status`；其他 slash command 生成不支持说明。`/fast` 映射到 app-server Fast service tier（当前 catalog value 通常是 `priority`），`off` 清除显式 tier 回到 Codex 配置默认值。
 2. Web composer 有 Chat / Plan / Goal 三种模式。Plan/Goal 通过本轮 turn 的 `options` 传给 server，是一次性输入状态，不应泄漏到后续默认 turn。Permissions 必须从当前在线 app-server 的 `permissionProfile/list` 动态读取；`permissions` 与旧 `sandboxPolicy` 互斥，不能在 Web 写死 profile 目录。
-3. Web 在 thread running 时继续发送普通输入，应走 app-server `turn/steer`，并带当前 active `turnId`。没有 active turnId 或非 Web source 时才进入 queue fallback。
+3. Web 在 thread running 时继续发送普通输入，应走 app-server `turn/steer`，并带当前 active `turnId`；当前 active Turn 正在 context compaction 时直接进入 queue，竞态下被 `cannot steer a compact turn` 拒绝也回退 queue。没有 active turnId 或非 Web source 时才进入 queue fallback。
 4. Web 在 running thread 上用 Goal mode 发送，应更新 active goal，而不是启动新 turn 或追加 queue。
 5. Goal 状态来自 thread record 流里的 `thread_goal_updated` / `thread_goal_cleared`，需要合并 app-server snapshot 和 live records 提取；不要只看 composer 当前选中模式。
 6. `POST /api/threads/:threadId/stop` 只停止当前 running turn，不是关闭 machine runtime。UI running 状态下主操作可以收敛成 stop turn。
