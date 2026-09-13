@@ -1,5 +1,4 @@
 import path from "node:path";
-import { loadDotEnv } from "../src/core/dotenv.js";
 import { codexHubDataDirectory } from "../src/core/authorityPaths.js";
 import { readAndApplyServerConfigEnv } from "../src/core/serverConfigEnv.js";
 import { authorityBuildId, resolveAuthorityId } from "../src/core/embeddedAuthority.js";
@@ -9,7 +8,6 @@ import type { HealthPayload } from "../src/shared/apiContract.js";
 class ProductionIdentityError extends Error {}
 
 // Called only by the explicit publish/rollback workflow, never by normal bootstrap.
-await loadDotEnv();
 const dataDir = codexHubDataDirectory();
 await readAndApplyServerConfigEnv(path.join(dataDir, "config.yaml"));
 const config = loadConfig();

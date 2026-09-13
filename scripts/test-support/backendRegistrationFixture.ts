@@ -176,7 +176,7 @@ export const createBackendRegistrationFixture = async (
   await chmod(mockPath, 0o755);
   await writeFile(statsPath, JSON.stringify({ startCount: 0, pids: [] }));
 
-  const envKeys = ["CODEX_HUB_CODEX_CLI", "MOCK_CODEX_STATE_FILE", "MOCK_CODEX_WS_MODULE", "MOCK_CODEX_RICH_TURNS", "MOCK_CODEX_TURN_DELAY_MS", "CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", "CODEX_HUB_PLUGIN_TELEGRAM", "CODEX_HUB_LOCAL_MACHINE_ID", "CODEX_HUB_LOCAL_MACHINE_NAME"] as const;
+  const envKeys = ["CODEX_HUB_CODEX_CLI", "MOCK_CODEX_STATE_FILE", "MOCK_CODEX_WS_MODULE", "MOCK_CODEX_RICH_TURNS", "MOCK_CODEX_TURN_DELAY_MS", "CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS", "CODEX_HUB_PLUGIN_TELEGRAM", "CODEX_HUB_LOCAL_MACHINE_ID", "CODEX_HUB_LOCAL_MACHINE_NAME", "CODEX_HUB_NTFY_URL"] as const;
   const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, {
     CODEX_HUB_CODEX_CLI: mockPath,
@@ -187,7 +187,8 @@ export const createBackendRegistrationFixture = async (
     CODEX_HUB_APP_SERVER_READY_TIMEOUT_MS: "5000",
     CODEX_HUB_PLUGIN_TELEGRAM: "0",
     CODEX_HUB_LOCAL_MACHINE_ID: childLocalMachineId,
-    CODEX_HUB_LOCAL_MACHINE_NAME: "Backend registration child"
+    CODEX_HUB_LOCAL_MACHINE_NAME: "Backend registration child",
+    CODEX_HUB_NTFY_URL: ""
   });
 
   const parentPort = await findFreePort("127.0.0.1");

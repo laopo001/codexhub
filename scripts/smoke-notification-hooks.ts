@@ -305,8 +305,8 @@ async function assertServerStateEnv(root: string) {
   const state = await CodexhubServerState.load({ dataDir });
   const targetEnv: NodeJS.ProcessEnv = { CODEX_HUB_NTFY_URL: "from-process" };
   state.applyEnvToProcess(targetEnv);
-  if (targetEnv.CODEX_HUB_NTFY_URL !== "from-process") {
-    throw new Error("config env overrode an existing process env value");
+  if (targetEnv.CODEX_HUB_NTFY_URL !== "https://ntfy.sh/from-state") {
+    throw new Error("config env did not override an existing process env value");
   }
   if (targetEnv.CODEX_HUB_HOST !== "127.0.0.1") throw new Error("config env did not apply host");
   if (targetEnv.CODEX_HUB_NTFY_TIMEOUT_MS !== "1234") {

@@ -4,13 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ENV_FILE=".env"
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing ${ENV_FILE}. Create it from .env.example first." >&2
-  exit 1
-fi
-
 ARTIFACT_BACKUP_DIR="$(mktemp -d)"
 PM2_SNAPSHOT_SAVED=0
 DEPLOY_SUCCEEDED=0
@@ -61,7 +54,7 @@ if [[ -z "$CODEX_HUB_BUILD_ID" ]]; then
 fi
 
 PROD_PORT="$(
-  node --input-type=module -e 'import { loadDotEnv } from "./dist-node/src/core/dotenv.js"; import { loadConfig } from "./dist-node/src/core/config.js"; import { codexHubDataDirectory } from "./dist-node/src/core/authorityPaths.js"; import { readAndApplyServerConfigEnv } from "./dist-node/src/core/serverConfigEnv.js"; import path from "node:path"; await loadDotEnv(); await readAndApplyServerConfigEnv(path.join(codexHubDataDirectory(), "config.yaml")); console.log(loadConfig().port);'
+  node --input-type=module -e 'import { loadConfig } from "./dist-node/src/core/config.js"; import { codexHubDataDirectory } from "./dist-node/src/core/authorityPaths.js"; import { readAndApplyServerConfigEnv } from "./dist-node/src/core/serverConfigEnv.js"; import path from "node:path"; await readAndApplyServerConfigEnv(path.join(codexHubDataDirectory(), "config.yaml")); console.log(loadConfig().port);'
 )"
 PROD_URL="http://127.0.0.1:${PROD_PORT}"
 

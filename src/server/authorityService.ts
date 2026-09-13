@@ -8,6 +8,7 @@ import {
   resolveEmbeddedAuthorityHost,
   runAuthorityRestartSupervisor
 } from "../core/embeddedAuthority.js";
+import { applyServerConfigEnv, readServerConfigEnv } from "../core/serverConfigEnv.js";
 import { resolveAuthorityNode } from "../core/authorityNode.js";
 import { resolveCodexAppServerLaunchOptions, parseCodexApprovalPolicy, parseCodexApprovalsReviewer, parseCodexSandboxMode } from "../cli/codexAppServerProcess.js";
 import { startEmbeddedServer } from "./embedded.js";
@@ -34,6 +35,8 @@ export const runAuthorityService = async (
   const dataDir = required(args, "data-dir");
   const staticDirectory = required(args, "static-directory");
   const buildId = args.get("build-id") || null;
+  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  applyServerConfigEnv(configEnv);
   const host = args.get("host") || await resolveEmbeddedAuthorityHost(dataDir);
   const authToken = authorityServiceAuthToken(args.get("auth-token-env"), process.env);
   const projectCatalog = parseProjectCatalog(args.get("project-catalog") || "editable");
@@ -67,7 +70,8 @@ export const runAuthorityService = async (
       remoteClientPath,
       nodeCommand: nodeRuntime.command,
       nodeSource: nodeRuntime.source,
-      authToken
+      authToken,
+      authTokenFromConfig: configEnv !== undefined && Object.prototype.hasOwnProperty.call(configEnv, "CODEX_HUB_AUTH_TOKEN")
     },
     authToken,
     authority: {

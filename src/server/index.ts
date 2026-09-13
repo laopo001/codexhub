@@ -12,9 +12,9 @@ import { createMachineId, MachineHub } from "../core/machineHub.js";
 import { AuthorityBuildMonitor } from "../core/authorityBuildMonitor.js";
 import { createAuthorityRestartCoordinator, type AuthorityRestartCoordinator } from "../core/embeddedAuthority.js";
 import { loadConfig } from "../core/config.js";
-import { loadDotEnv } from "../core/dotenv.js";
 import { PluginHub } from "../core/pluginHub.js";
 import { CodexPetStore } from "../core/petStore.js";
+import { isServerConfigEnvApplied } from "../core/serverConfigEnv.js";
 import { ntfyNotificationRunnerFromEnv } from "../core/notificationHooks.js";
 import { CodexhubServerState } from "../core/serverState.js";
 import { listSshHosts } from "../core/sshConfig.js";
@@ -218,6 +218,7 @@ export type ServerStartOptions = {
     nodeCommand: string;
     nodeSource: "configured" | "path" | "host-fallback";
     authToken: string;
+    authTokenFromConfig?: boolean;
   };
   features?: Partial<ServerFeatureOptions>;
 };
@@ -385,6 +386,8 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       nodeCommand: options.authorityRestart.nodeCommand,
       nodeSource: options.authorityRestart.nodeSource,
       authRequired: Boolean(serverAuthToken),
+      authTokenFromConfig: options.authorityRestart.authTokenFromConfig
+        ?? (options.authToken === undefined && isServerConfigEnvApplied("CODEX_HUB_AUTH_TOKEN")),
       oldPid: process.pid,
       serverInstanceId,
       authorityBuildFiles: options.authorityBuildFiles ?? [],
@@ -1388,7 +1391,6 @@ const isDirectEntryPoint = () => {
 
 if (isDirectEntryPoint()) {
   void (async () => {
-    await loadDotEnv();
     await startServer();
   })().catch((error) => {
     console.error(error);

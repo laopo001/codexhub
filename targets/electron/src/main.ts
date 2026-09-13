@@ -21,7 +21,7 @@ import {
   resolveWindowsVsCodeCliExecutable,
   type PetActivityOpenTarget
 } from "../../../src/shared/petActivityRouting.js";
-import { applyServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
+import { applyServerConfigEnv, mergeServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
 import { resolveAuthorityPackage } from "../../../src/core/authorityPackage.js";
 import { withUserPath } from "../../../src/core/userPath.js";
@@ -37,7 +37,6 @@ import {
   configuredAuthorityAuthToken,
   removeLegacyAuthorityTokenFiles
 } from "../../../src/core/authorityAuth.js";
-import { loadDotEnv } from "../../../src/core/dotenv.js";
 import { createCodexHubApiClient, CodexHubApiError } from "../../../src/shared/apiClient.js";
 import { apiRoutes } from "../../../src/shared/apiRoutes.js";
 import { httpUrlFromValue } from "../../../src/shared/externalUrl.js";
@@ -523,8 +522,9 @@ const ensureElectronSurface = async () => {
 };
 
 const startElectronAuthority = async () => {
-  await loadDotEnv();
   const dataDir = embeddedAuthorityDataDirectory();
+  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  applyServerConfigEnv(configEnv);
   const packagedResourceDirectory = electronApp.isPackaged
     ? path.join(process.resourcesPath, "codexhub")
     : path.resolve(mainDirectory, "..", "..");
@@ -542,11 +542,9 @@ const startElectronAuthority = async () => {
   await removeLegacyAuthorityTokenFiles(dataDir).catch((error: unknown) => {
     console.warn(`codexhub electron could not remove obsolete authority token file: ${errorText(error)}`);
   });
-  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
   // Electron main-process behavior is not a VS Code setting. Apply the same
   // shared config.yaml env map before DevTools/workspace handling runs.
-  applyServerConfigEnv(configEnv);
-  const environment = await withUserPath({ ...(configEnv ?? {}), ...process.env });
+  const environment = await withUserPath(mergeServerConfigEnv(process.env, configEnv));
   // Prefer the current local npm/link package discovered through PATH. This
   // is shared with VS Code and lets `pnpm run link:all` update the Windows
   // authority for both embedded clients. Fall back to the bundled authority

@@ -4,7 +4,7 @@
 
 Agent 开发改动时按这套固定流程起本地服务并用 CDP 测试，不要临时发明端口或浏览器实例。
 
-1. 默认使用 `pnpm dev` 同时启动两个本地服务：后端 `pnpm run dev:api`（监听 `127.0.0.1:18788`），前端 `pnpm run dev:web`（Vite 监听 `127.0.0.1:15173`，`/api` 代理到 `18788`）。两者由 `scripts/dev.ts` 统一启动；无参数启动 API 和 Web，传入 `api` 只启动 API。开发 API 子进程必须在 spawn 环境中使用仓库绝对路径 `<repo>/tmp/dev-api` 覆盖 `CODEX_HUB_DATA_DIR`，与日常 authority 的 `~/.config/codexhub` 隔离；用户显式设置的 shell/`.env` 环境变量仍保留。只改后端可只起 `dev:api`，只改前端可只起 `dev:web`。不要改默认端口，也不要让两端的端口对不上。
+1. 默认使用 `pnpm dev` 同时启动两个本地服务：后端 `pnpm run dev:api`（监听 `127.0.0.1:18788`），前端 `pnpm run dev:web`（Vite 监听 `127.0.0.1:15173`，`/api` 代理到 `18788`）。两者由 `scripts/dev.ts` 统一启动；无参数启动 API 和 Web，传入 `api` 只启动 API。开发 API 子进程必须在 spawn 环境中使用仓库绝对路径 `<repo>/tmp/dev-api` 覆盖 `CODEX_HUB_DATA_DIR`，与日常 authority 的 `~/.config/codexhub` 隔离；CLI 显式参数、`config.yaml` 的 `env`、继承的进程环境和默认值按此顺序生效。只改后端可只起 `dev:api`，只改前端可只起 `dev:web`。不要改默认端口，也不要让两端的端口对不上。
 2. CDP 必须复用全局规则里的 Windows Chrome 实例（`http://127.0.0.1:19222`，user-data-dir `D:\Chrome\User Data`）。连不上就按全局 CDP 排查步骤处理，不要自启其他 Chrome/Chromium、不要换端口或 user-data-dir、不要用 Playwright 自带浏览器。
 3. 浏览测试入口是前端 `http://127.0.0.1:15173`；Vite 会把 `/api` 请求代理到 `18788`，所以单开一个 tab 即可覆盖前后端链路，不要再单独打开 `18788`。
 4. 自动化优先新建 tab 工作，不复用用户已有 tab；任务结束只关闭本次任务创建的 tab，不要关闭 CDP 浏览器、Chrome 进程或整个 browser context。直接用 Playwright API 连接 CDP 时结束用 `browser.disconnect()`，不要用 `browser.close()`。
@@ -79,7 +79,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 ## Server Config
 
 1. server config 默认在 `CODEX_HUB_DATA_DIR` 下的 `config.yaml`，未设置 `CODEX_HUB_DATA_DIR` 时使用 `~/.config/codexhub/config.yaml`，数据结构版本为 `version: 1`。loader 兼容旧 `server-state.yaml` 并会迁移保存到 `config.yaml`。
-2. config 可以保存 parent registration、local/SSH machine 元数据、projects、tasks、task 最近 run 摘要、SSH hosts，以及启动时填补 `process.env` 的 `env` 映射。父 server 收到的 registered machine 不持久化，旧配置中的 registered machine 元数据由 loader 清理且不影响关联 project/task。parent registration/projects/tasks/SSH hosts 属于本机配置；`updatedAt` 和最近 run 摘要属于轻量状态。parent auth token 可省略且只允许后端读取，不能通过 API、状态 message 或日志投影给 Web，保存配置时文件权限必须是 `0600`。VSCode authority 共享 parent profile，effective machineId/name 由 authority identity 覆盖，surface/window identity 不进入配置。config `env` 不能覆盖 shell / `.env` / CLI 参数，也不能用来改变当前 config 文件自己的位置。
+2. config 可以保存 parent registration、local/SSH machine 元数据、projects、tasks、task 最近 run 摘要、SSH hosts，以及启动时应用的 `env` 映射。父 server 收到的 registered machine 不持久化，旧配置中的 registered machine 元数据由 loader 清理且不影响关联 project/task。parent registration/projects/tasks/SSH hosts 属于本机配置；`updatedAt` 和最近 run 摘要属于轻量状态。parent auth token 可省略且只允许后端读取，不能通过 API、状态 message 或日志投影给 Web，保存配置时文件权限必须是 `0600`。VSCode authority 共享 parent profile，effective machineId/name 由 authority identity 覆盖，surface/window identity 不进入配置。配置优先级是 CLI 显式参数 > `config.yaml` > 继承的进程环境变量 > 默认值；config `env` 不能改变当前 config 文件自己的位置。
 3. config 不保存 thread summary 数量、history 数量、完整 transcript 内容、runtime 进程代次或 project `lastSessionId`。project 的 `lastThreadId` 只是最近使用过的 Codex thread 指针，不是 transcript 权威来源；当前 runtime 只能来自 `/api/runtimes`。
 4. project ID 由 `machineId + path` 推导；project 名称来自 path basename，不持久化自定义 name，也不提供 rename UI/API。
 5. 删除 project 只删除 project 配置，不能停止该 machine 的 runtime session。session capture 不应创建、恢复或更新 projects；只有显式添加、保存或 project path thread bootstrap 才能写入 projects。
@@ -104,7 +104,7 @@ codexhub 是 local-first 的 Codex 控制面：本机 Node.js server 提供 HTTP
 2. CLI 和 Web 复用 `/api/machines/:machineId/threads` 创建或恢复 thread，通过现有 thread name/turn API 命名和发送，并通过 `/api/events/ws` 读取权威回复。CLI 必须显式保留目标 threadId；运行中的 steer、排队和 Goal 投递由后端决定。start 默认持续监听并输出 canonical records，直到 `end` 的 transient lifecycle 信号；send 只投递提示词、运行中的引导或后续新任务并返回确认，执行回复仍由原 start 输出。start/send 不提供 `--stream`、`--wait` 或 `--no-wait`。退出客户端不停止后端执行。历史浏览仍使用 Web/API。模型目录来自该 machine 当前在线 runtime 的 app-server `model/list`，通过 `/api/machines/:machineId/models` 暴露，不在 `config.yaml` 持久化。
 3. `--sandbox`、`--approval-policy` 只有用户显式传参时才作为 app-server override 转发；不要偷偷发明默认权限策略。
 4. 对话 CLI 的 `--model` / `--effort` 通过共享 turn options 传递；start 从同一 `/api/events/ws` 持续输出可读文本，保留 canonical records 作为内部来源，不伪造 `codex exec` 事件。`delegate-to-codex` skill 的委派说明直接调用这一 `codexhub` 入口；不创建另一套任务/会话数据库，也不隐式改变 Web surface 的 open tabs。排查时按准确 `threadId` 查找 Codex 已有 rollout JSONL，不另开 raw 输出流。会话通过现有 thread picker 查看。
-4. CLI 默认通过 `loadDotEnv()` 读取当前 cwd 的 `.env`，并且只填补未设置的环境变量。跨目录运行 `cxh` 时要先核对 cwd 和环境来源。
+4. CLI 不读取或解析当前 cwd 的 `.env`；环境变量必须由调用进程显式继承，持久化配置放在 `config.yaml`。
 5. 发布后的 bin 必须是 `#!/usr/bin/env node` + `dist-node` 编译产物，不依赖全局 `tsx`。
 
 ## Thread 行为

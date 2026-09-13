@@ -9,7 +9,7 @@ import { configuredAuthorityAuthToken } from "../core/authorityAuth.js";
 import { authorityBuildId, ensureEmbeddedAuthority, cleanupFailedAuthorityStartup, authorityStartupError, type EmbeddedAuthorityHandle } from "../core/embeddedAuthority.js";
 import { resolveAuthorityPackage } from "../core/authorityPackage.js";
 import { codexHubDataDirectory } from "../core/authorityPaths.js";
-import { readServerConfigEnv } from "../core/serverConfigEnv.js";
+import { mergeServerConfigEnv, readServerConfigEnv } from "../core/serverConfigEnv.js";
 import { authorityServiceHost, authorityServicePort } from "../shared/surfaceTypes.js";
 
 const RUNTIME_POLL_INTERVAL_MS = 250;
@@ -91,7 +91,7 @@ export const ensureLocalAuthority = async (input: LocalAuthorityInput) => {
   const deadline = Math.min(Date.now() + readStartTimeout(input.timeoutMs), input.deadline ?? Infinity);
   if (deadline <= Date.now()) throw new Error("No time remains in the CLI conversation timeout for local authority startup.");
   const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
-  const environment = { ...(configEnv ?? {}), ...process.env };
+  const environment = mergeServerConfigEnv(process.env, configEnv);
   const explicitStatic = input.staticDirectory ?? environment.CODEX_HUB_STATIC_DIR;
   let staticDirectory = path.resolve(explicitStatic || path.join(packageRoot, "dist"));
   if (explicitStatic && !(await stat(staticDirectory).catch(() => null))?.isDirectory()) {

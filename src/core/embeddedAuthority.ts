@@ -7,7 +7,8 @@ import net from "node:net";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { resolveAuthorityNode, type AuthorityNodeRuntime } from "./authorityNode.js";
-import { readServerConfigEnv } from "./serverConfigEnv.js";
+import { mergeServerConfigEnv, readServerConfigEnv, restoreAppliedServerConfigEnv } from "./serverConfigEnv.js";
+import { authorityAuthTokenEnvName } from "./authorityAuth.js";
 import type { HealthPayload } from "../shared/apiContract.js";
 import {
   authorityKind,
@@ -70,6 +71,7 @@ export type AuthorityRestartLaunchSpec = {
   nodeCommand: string;
   nodeSource: AuthorityNodeRuntime["source"];
   authRequired: boolean;
+  authTokenFromConfig?: boolean;
   oldPid: number;
   oldServerInstanceId: string;
 };
@@ -244,6 +246,7 @@ const requestRestart = async (
       nodeCommand: input.nodeCommand,
       nodeSource: input.nodeSource,
       authRequired: input.authRequired,
+      authTokenFromConfig: input.authTokenFromConfig,
       oldPid: process.pid,
       oldServerInstanceId: input.serverInstanceId,
     };
@@ -282,6 +285,7 @@ const spawnRestartSupervisor = async (spec: AuthorityRestartLaunchSpec, authToke
   const logFd = openSync(logPath, "a", 0o600);
   try {
     const childEnv: NodeJS.ProcessEnv = { ...(process.env as NodeJS.ProcessEnv) };
+    restoreAppliedServerConfigEnv(childEnv);
     delete childEnv.CODEX_HUB_AUTH_TOKEN;
     const child = spawn(spec.nodeCommand, [...(spec.serviceCommand ?? [spec.servicePath]), "--restart-supervisor", "--handoff", handoffPath], {
       cwd: spec.dataDir, detached: true, windowsHide: true, stdio: ["ignore", logFd, logFd], env: childEnv
@@ -324,10 +328,20 @@ export const runAuthorityRestartSupervisor = async (handoffPath: string) => {
   await waitForProcessExit(spec.oldPid, 20_000);
   await waitForPortRelease(spec.host === "0.0.0.0" || spec.host === "::" ? "127.0.0.1" : spec.host, spec.port, 20_000);
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  restoreAppliedServerConfigEnv(childEnv);
+  const inheritedAuthToken = childEnv.CODEX_HUB_AUTH_TOKEN;
   delete childEnv.CODEX_HUB_RESTART_HANDOFF;
   delete childEnv.CODEX_HUB_AUTH_TOKEN;
-  if (authToken) childEnv.CODEX_HUB_AUTH_TOKEN = authToken;
-  const args = [...(spec.serviceCommand ?? [spec.servicePath]), "--host", spec.host, ...authorityLaunchArgs(spec.appServerLaunch), "--port", String(spec.port), "--authority-id", spec.authorityId, "--authority-kind", spec.authorityKind, "--data-dir", spec.dataDir, "--static-directory", spec.staticDirectory, "--build-id", spec.buildId, "--project-catalog", spec.projectCatalog, ...(spec.remoteClientPath ? ["--remote-client", spec.remoteClientPath] : []), ...(spec.authRequired ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])];
+  const configEnv = await readServerConfigEnv(path.join(spec.dataDir, "config.yaml"));
+  const hasConfiguredAuthToken = configEnv !== undefined && Object.prototype.hasOwnProperty.call(configEnv, authorityAuthTokenEnvName);
+  const successorAuthToken = hasConfiguredAuthToken
+    ? configEnv?.[authorityAuthTokenEnvName]?.trim() ?? ""
+    : spec.authTokenFromConfig
+      ? ""
+      : inheritedAuthToken?.trim() || authToken;
+  if (successorAuthToken) childEnv.CODEX_HUB_AUTH_TOKEN = successorAuthToken;
+  const successorAuthRequired = Boolean(successorAuthToken);
+  const args = [...(spec.serviceCommand ?? [spec.servicePath]), "--host", spec.host, ...authorityLaunchArgs(spec.appServerLaunch), "--port", String(spec.port), "--authority-id", spec.authorityId, "--authority-kind", spec.authorityKind, "--data-dir", spec.dataDir, "--static-directory", spec.staticDirectory, "--build-id", spec.buildId, "--project-catalog", spec.projectCatalog, ...(spec.remoteClientPath ? ["--remote-client", spec.remoteClientPath] : []), ...(successorAuthRequired ? ["--auth-token-env", "CODEX_HUB_AUTH_TOKEN"] : [])];
   const logPath = path.join(spec.dataDir, "authority.log");
   const logFd = openSync(logPath, "a", 0o600);
   try {
@@ -341,7 +355,7 @@ export const runAuthorityRestartSupervisor = async (handoffPath: string) => {
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${spec.port}/api/health`, {
-        headers: spec.authRequired ? { authorization: `Bearer ${authToken}` } : undefined
+        headers: successorAuthRequired ? { authorization: `Bearer ${successorAuthToken}` } : undefined
       });
       const health = await response.json() as HealthPayload;
       if (response.ok && health.authority?.authorityId === spec.authorityId && health.build === spec.buildId && health.authority.surfaceProtocolVersion === spec.protocolVersion && health.serverInstanceId !== spec.oldServerInstanceId) return;
@@ -371,39 +385,36 @@ const waitForPortRelease = async (host: string, port: number, timeoutMs: number)
 };
 
 /**
- * Resolve the shared authority port. Explicit process/CLI environment values
- * win, while config.yaml supplies the default for VS Code and Electron when
- * they are the first client to start the detached authority.
+ * Resolve the shared authority port. Config.yaml overrides inherited process
+ * values; an explicit port passed by the caller remains the highest priority.
  */
 export const resolveEmbeddedAuthorityPort = async (
   dataDir: string,
   env: NodeJS.ProcessEnv = process.env
 ) => {
   const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
-  return authorityServicePort({
-    ...(configEnv ?? {}),
-    ...env
-  }, process.platform);
+  return authorityServicePort(mergeServerConfigEnv(env, configEnv), process.platform);
 };
 
 /**
  * Resolve the detached authority listen host. Authorities stay loopback-only
  * by default; an explicit wildcard host is required before exposing one to a
- * LAN. Process environment values win over config.yaml, matching the port
- * and auth-token precedence used by the embedded clients.
+ * LAN. Config.yaml overrides inherited process values.
  */
 export const resolveEmbeddedAuthorityHost = async (
   dataDir: string,
   env: NodeJS.ProcessEnv = process.env
 ) => {
   const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
-  return authorityServiceHost({ ...(configEnv ?? {}), ...env });
+  return authorityServiceHost(mergeServerConfigEnv(env, configEnv));
 };
 
 export const ensureEmbeddedAuthority = async (
   input: EnsureEmbeddedAuthorityInput
 ): Promise<EmbeddedAuthorityHandle> => {
-  const environment = input.environment ?? process.env;
+  const inheritedEnvironment = input.environment ?? process.env;
+  const configEnv = await readServerConfigEnv(path.join(input.dataDir, "config.yaml"));
+  const environment = mergeServerConfigEnv(inheritedEnvironment, configEnv);
   const port = input.port ?? await resolveEmbeddedAuthorityPort(input.dataDir, environment);
   const url = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + positiveStartupTimeout(input.startupTimeoutMs);
@@ -411,7 +422,7 @@ export const ensureEmbeddedAuthority = async (
   try {
     const authorityId = await resolveAuthorityId(input.dataDir);
     const host = input.host ?? await resolveEmbeddedAuthorityHost(input.dataDir, environment);
-    input = { ...input, host, requireHost: input.requireHost ?? Boolean(
+    input = { ...input, environment, host, requireHost: input.requireHost ?? Boolean(
       input.host !== undefined || environment.CODEX_HUB_HOST?.trim() || environment.CODEX_HUB_AUTHORITY_HOST?.trim()
     ) };
     let existing = await probeEmbeddedAuthority(url, authorityId, Boolean(input.authToken), input.authToken);

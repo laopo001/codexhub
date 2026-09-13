@@ -10,7 +10,6 @@ references
 schemas
 .env
 .env.*
-!.env.example
 *.log
 Dockerfile
 .dockerignore

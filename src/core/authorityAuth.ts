@@ -7,12 +7,13 @@ type Environment = Record<string, string | undefined>;
 
 const normalizedToken = (value: string | undefined) => value?.trim() ?? "";
 
-/** Authority authentication is opt-in; the process environment wins over config.yaml. */
+/** Authority authentication is opt-in; config.yaml wins over inherited environment values. */
 export const configuredAuthorityAuthToken = (
   processEnv: Environment,
   configEnv: Environment | undefined
-) => normalizedToken(processEnv[authorityAuthTokenEnvName])
-  || normalizedToken(configEnv?.[authorityAuthTokenEnvName]);
+) => configEnv && Object.prototype.hasOwnProperty.call(configEnv, authorityAuthTokenEnvName)
+  ? normalizedToken(configEnv[authorityAuthTokenEnvName])
+  : normalizedToken(processEnv[authorityAuthTokenEnvName]);
 
 /** Only an explicit auth-token env argument may enable the detached authority service. */
 export const authorityServiceAuthToken = (

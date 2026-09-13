@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { recordToView } from "../../src/core/codexRecordView.js";
 import type { CodexRecord, CodexRecordView } from "../../src/shared/recordTypes.js";
 import type { ProxyInput } from "../../src/shared/inputTypes.js";
-import { loadDotEnv } from "../../src/core/dotenv.js";
 import { compactRecordView, createCompactRecordViewState, type CompactRecordView } from "../../src/shared/compactRecordViews.js";
 import { createCodexHubApiClient, type CodexHubApiClient } from "../../src/shared/apiClient.js";
 import { apiRoutes } from "../../src/shared/apiRoutes.js";
@@ -604,7 +603,6 @@ const moduleFilePath = () => {
 
 if (isCliEntrypoint()) {
   void (async () => {
-    await loadDotEnv();
     const handle = await startTelegramBotFromEnv();
     process.once("SIGINT", () => handle?.stop("SIGINT"));
     process.once("SIGTERM", () => handle?.stop("SIGTERM"));

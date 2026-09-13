@@ -19,7 +19,6 @@ Machine、surface、workspace、project、thread 与 `workingDirectory` 的身�
 
 ```bash
 pnpm install
-cp .env.example .env
 pnpm dev
 ```
 
@@ -28,11 +27,11 @@ pnpm dev
 - Web: `http://127.0.0.1:15173`
 - API: `http://127.0.0.1:18788`
 
-Vite 会把 `/api` 代理到开发 API。开发 API 由现有 `scripts/dev.ts` 启动器直接拉起，使用仓库内被 Git 忽略的绝对数据目录 `<repo>/tmp/dev-api`，因此不会和日常 authority 的 `~/.config/codexhub` 共享 `authority-id`、`config.yaml` 或 parent registration 配置；用户在 shell 或 `.env` 中显式设置的 `CODEX_HUB_REGISTER_TO` 等环境变量仍按正常优先级生效。
+Vite 会把 `/api` 代理到开发 API。开发 API 由现有 `scripts/dev.ts` 启动器直接拉起，使用仓库内被 Git 忽略的绝对数据目录 `<repo>/tmp/dev-api`，因此不会和日常 authority 的 `~/.config/codexhub` 共享 `authority-id`、`config.yaml` 或 parent registration 配置。CLI 显式参数、`config.yaml`、继承的进程环境和默认值按此顺序生效。
 
 ## 生产/本地 server
 
-`codexhub server` 是共享本机 authority 的前台管理入口，会读取当前目录的 `.env`。首次启动 detached authority，后续调用复用同一服务并通过 client heartbeat 保活；退出前台命令只结束管理连接，活跃窗口和任务继续运行。`CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写在 `.env` 或 `config.yaml` 的 `env` 字段里，也可以用 CLI 覆盖；优先级是 CLI 参数 > 当前 shell 环境变量 > `.env` > `config.yaml` 的 `env` > 内置默认值。
+`codexhub server` 是共享本机 authority 的前台管理入口，不读取当前目录的 `.env`。首次启动 detached authority，后续调用复用同一服务并通过 client heartbeat 保活；退出前台命令只结束管理连接，活跃窗口和任务继续运行。`CODEX_HUB_HOST` / `CODEX_HUB_PORT` 可以写在 `config.yaml` 的 `env` 字段里，也可以用 CLI 覆盖；优先级是 CLI 参数 > `config.yaml` > 继承的进程环境变量 > 内置默认值。
 
 CLI、VSCode 和 Electron 在同一执行环境中共用一个 authority、配置目录和 local runtime。默认只监听 loopback：
 
@@ -120,7 +119,7 @@ CODEX_HUB_SSH_AUTOCONNECT=0
 ~/.config/codexhub/config.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。普通 Node server、Electron 和 VS Code detached authority 的非编辑器配置也统一从这里读取；它们通过 `env` 映射承载监听地址、authority 端口、app-server、SSH、插件、通知、catalog/runtime 以及 Electron 行为等 CodexHub 参数。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。server 启动时会先读取 `env`，只把尚未存在的键填入 `process.env`，不会覆盖 shell 或 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。普通 Node server、Electron 和 VS Code detached authority 的非编辑器配置也统一从这里读取；它们通过 `env` 映射承载监听地址、authority 端口、app-server、SSH、插件、通知、catalog/runtime 以及 Electron 行为等 CodexHub 参数。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。配置优先级是 CLI 显式参数 > `config.yaml` > 继承的进程环境变量 > 内置默认值；CodexHub 不读取或解析 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
 
 `config.yaml` 里的 `env` 适合 embedded authority service 这类不方便配置 shell 环境变量的场景。例如：
 
@@ -257,7 +256,7 @@ project bootstrap 或 thread 创建接口会返回 `machineId` 和 `threadId`；
 
 `codexhub` 启动官方 Codex app-server 时不注入默认 approval policy 或 sandbox，未设置时沿用 Codex CLI 自身配置；approval reviewer 默认使用 `auto_review`。需要覆盖时，可显式通过 `--approval-policy` 或 `CODEX_HUB_APP_SERVER_APPROVAL_POLICY` 设置 `untrusted`、`on-request` 或 `never`，通过 `--approvals-reviewer` 或 `CODEX_HUB_APP_SERVER_APPROVALS_REVIEWER` 设置 `user`、`auto_review` 或当前协议保留的 `guardian_subagent`，通过 `--sandbox` 或 `CODEX_HUB_APP_SERVER_SANDBOX` 固定 sandbox。`codexhub server`、`codexhub machine` 和 SSH / registered machine 会把最终生效的启动选项通过对应 `-c` 配置传给官方 `codex app-server`。
 
-Telegram bot 是内建 integration plugin。`.env` 里配置 token 后直接运行 `pnpm run dev:api` 即可：
+Telegram bot 是内建 integration plugin。把 token 写入 `config.yaml` 的 `env`，或在启动进程中显式设置 `TELEGRAM_BOT_TOKEN` 后直接运行 `pnpm run dev:api` 即可：
 
 ```bash
 TELEGRAM_BOT_TOKEN=xxx
@@ -401,16 +400,15 @@ pnpm build
 
 ## 生产发布
 
-生产环境由 PM2 管理；API server 同时服务 Web `dist`，监听地址由 `.env` 或 CLI 参数决定。
+生产环境由 PM2 管理；API server 同时服务 Web `dist`，监听地址由 CLI 参数、`config.yaml` 或继承的进程环境决定。
 
 ```bash
-cp .env.example .env
 pnpm run publish:prod
 ```
 
 长期进程：
 
-- `codexhub-prod`: 端口跟随 `.env` 里的 `CODEX_HUB_PORT`
+- `codexhub-prod`: 端口跟随 `config.yaml` 的 `env.CODEX_HUB_PORT`，未配置时使用继承的进程环境或默认值
 - Telegram bot 内置在共享 authority，由实际 server 进程启动
 
 发布脚本会先备份当前生产产物，再运行 `pnpm check` 和 `pnpm build`，记录 `v<version>+<git-sha>[.dirty]` 发布标识，通过 PM2 的仓库 `bin/codexhub` 入口启动或重启管理客户端，然后显式调用 authority 的 `/api/restart` 激活当前产物。验证检查 authority ID、配置目录、认证、服务 bundle 与 Web 入口的 build 指纹，以及 `/`。失败时恢复先前的 `dist`、`dist-node` 和 PM2 进程快照，并请求 authority 切回恢复的产物。单独 `pm2 restart` 只重连管理客户端；更新实际服务请使用发布流程或 Settings 中的 Restart CodexHub。

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyServerConfigEnv } from "../../src/core/serverConfigEnv.js";
+import { applyServerConfigEnv, restoreAppliedServerConfigEnv } from "../../src/core/serverConfigEnv.js";
 import { readBooleanEnv, readNonNegativeNumberEnv, readPositiveIntEnv } from "../../src/shared/env.js";
 
 test("shared environment readers preserve their explicit value domains", () => {
@@ -23,7 +23,7 @@ test("shared environment readers preserve their explicit value domains", () => {
   assert.equal(readBooleanEnv(env, "MISSING", false), false);
 });
 
-test("config.yaml env values only fill missing process values", () => {
+test("config.yaml env values override inherited process values", () => {
   const env: NodeJS.ProcessEnv = {
     CODEX_HUB_HOST: "127.0.0.1",
     CODEX_HUB_EMPTY: ""
@@ -34,8 +34,22 @@ test("config.yaml env values only fill missing process values", () => {
     CODEX_HUB_EMPTY: "from-config"
   }, env);
   assert.deepEqual(env, {
-    CODEX_HUB_HOST: "127.0.0.1",
+    CODEX_HUB_HOST: "0.0.0.0",
+    CODEX_HUB_AUTHORITY_HOST: "0.0.0.0",
     CODEX_HUB_PORT: "8788",
-    CODEX_HUB_EMPTY: ""
+    CODEX_HUB_AUTHORITY_PORT: "8788",
+    CODEX_HUB_EMPTY: "from-config"
   });
+});
+
+test("restart environments discard values injected by the previous config", () => {
+  const environment: NodeJS.ProcessEnv = { CODEX_HUB_HOST: "127.0.0.1", EXTERNAL: "keep" };
+  applyServerConfigEnv({ CODEX_HUB_HOST: "0.0.0.0", CODEX_HUB_PORT: "8788" }, environment);
+
+  const restartEnvironment = { ...environment };
+  restoreAppliedServerConfigEnv(restartEnvironment, environment);
+  assert.deepEqual(restartEnvironment, { CODEX_HUB_HOST: "127.0.0.1", EXTERNAL: "keep" });
+
+  applyServerConfigEnv({}, environment);
+  assert.deepEqual(environment, { CODEX_HUB_HOST: "127.0.0.1", EXTERNAL: "keep" });
 });

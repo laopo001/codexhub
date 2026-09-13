@@ -31,10 +31,6 @@ for command_name in git node pnpm pm2 curl flock; do
     exit 1
   fi
 done
-if [[ ! -f .env ]]; then
-  echo "Missing ${REPOSITORY_DIR}/.env." >&2
-  exit 1
-fi
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "Production checkout has tracked changes; refusing to deploy." >&2
   git status --short --untracked-files=no >&2

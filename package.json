@@ -27,7 +27,6 @@
     "MIGRATION.md",
     "LICENSE",
     "AGENTS.md",
-    ".env.example",
     "ecosystem.config.cjs",
     "Dockerfile",
     ".dockerignore"

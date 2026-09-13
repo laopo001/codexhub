@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import net from "node:net";
-import { loadDotEnv } from "../core/dotenv.js";
+import path from "node:path";
+import { mergeServerConfigEnv, readServerConfigEnv } from "../core/serverConfigEnv.js";
+import { codexHubDataDirectory } from "../core/authorityPaths.js";
 import { authorityServiceHost, type CodexHubAuthorityDescriptor, type CodexHubSurface } from "../shared/surfaceTypes.js";
 import type { CodexAppServerLaunchOptions } from "../shared/appServerLaunch.js";
 import {
@@ -27,6 +29,7 @@ export type EmbeddedServerOptions = {
     nodeCommand: string;
     nodeSource: "configured" | "path" | "host-fallback";
     authToken: string;
+    authTokenFromConfig?: boolean;
   };
   authToken?: string;
   localProjectCatalog?: "editable" | "fixed";
@@ -42,8 +45,10 @@ export type EmbeddedServerOptions = {
 };
 
 export const startEmbeddedServer = async (options: EmbeddedServerOptions) => {
-  await loadDotEnv();
-  const host = authorityServiceHost(process.env, options.host);
+  const dataDir = options.dataDir ?? codexHubDataDirectory();
+  const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
+  const environment = mergeServerConfigEnv(process.env, configEnv);
+  const host = authorityServiceHost(environment, options.host);
   const preferredPort = options.portMode === "random"
     ? await findFreePort(host)
     : options.preferredPort;

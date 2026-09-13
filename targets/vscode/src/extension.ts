@@ -14,7 +14,7 @@ import {
 } from "../../../src/core/embeddedAuthority.js";
 import { resolveAuthorityPackage } from "../../../src/core/authorityPackage.js";
 import { withUserPath } from "../../../src/core/userPath.js";
-import { readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
+import { mergeServerConfigEnv, readServerConfigEnv } from "../../../src/core/serverConfigEnv.js";
 import {
   embeddedSurfaceProtocolVersion,
   formatVscodeSurfacePrefix,
@@ -449,7 +449,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       console.warn(`codexhub vscode could not remove obsolete authority token file: ${errorText(error)}`);
     });
     const configEnv = await readServerConfigEnv(path.join(dataDir, "config.yaml"));
-    const environment = await withUserPath({ ...(configEnv ?? {}), ...process.env });
+    const environment = await withUserPath(mergeServerConfigEnv(process.env, configEnv));
     const packageResolution = await resolveAuthorityPackage({
       authorityServicePath: this.context.asAbsolutePath("authority-service.cjs"),
       staticDirectory: this.context.asAbsolutePath("dist"),
@@ -471,8 +471,8 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
       buildId,
       authToken,
       logFileName: "authority.log",
-      // Keep shell/.env/CLI values authoritative while allowing the shared
-      // config.yaml to select the Node executable for the first client.
+      // config.yaml overrides inherited environment values for the authority;
+      // explicit launch options remain on the request itself.
       environment,
       authorityServiceSource: packageResolution.source
     });

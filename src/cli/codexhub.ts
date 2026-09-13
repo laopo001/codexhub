@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { Command } from "commander";
 import { codexHubDataDirectory } from "../core/authorityPaths.js";
-import { loadDotEnv } from "../core/dotenv.js";
-import { readAndApplyServerConfigEnv } from "../core/serverConfigEnv.js";
+import { applyServerConfigEnv, readServerConfigEnv } from "../core/serverConfigEnv.js";
 import {
   parseCodexApprovalPolicy,
   parseCodexApprovalsReviewer,
@@ -115,8 +114,8 @@ type LocalTask = {
   lastError?: string;
 };
 
-await loadDotEnv();
-await readAndApplyServerConfigEnv(path.join(codexHubDataDirectory(), "config.yaml"));
+const cliConfigEnv = await readServerConfigEnv(path.join(codexHubDataDirectory(), "config.yaml"));
+applyServerConfigEnv(cliConfigEnv);
 
 const program = new Command()
   .name("codexhub")

@@ -17,15 +17,20 @@ test("VSCode authority authentication is disabled when no token was explicitly c
   }), "");
 });
 
-test("VSCode authority authentication can be explicitly enabled from process or config env", () => {
+test("VSCode authority authentication can be explicitly enabled from config or process env", () => {
   assert.equal(configuredVscodeAuthorityAuthToken({
     CODEX_HUB_AUTH_TOKEN: " shell-token "
   }, {
     CODEX_HUB_AUTH_TOKEN: "config-token"
-  }), "shell-token");
+  }), "config-token");
   assert.equal(configuredVscodeAuthorityAuthToken({}, {
     CODEX_HUB_AUTH_TOKEN: " config-token "
   }), "config-token");
+  assert.equal(configuredVscodeAuthorityAuthToken({
+    CODEX_HUB_AUTH_TOKEN: "shell-token"
+  }, {
+    CODEX_HUB_AUTH_TOKEN: ""
+  }), "");
   assert.equal(authorityServiceAuthToken(vscodeAuthorityAuthTokenEnvName, {
     CODEX_HUB_AUTH_TOKEN: " explicit-token "
   }), "explicit-token");
