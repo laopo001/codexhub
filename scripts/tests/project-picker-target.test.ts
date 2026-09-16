@@ -45,6 +45,56 @@ test("generic runtime thread picker keeps project origin unresolved", async () =
   assert.equal(currentPicker?.projectTarget, undefined);
 });
 
+test("selected sidebar project supplies the thread picker default when no key is persisted", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ threads: [] }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  });
+  const { createProjectActions } = await import("../../src/web/appActions/projectActions.js");
+  const runtime: RuntimeSummary = {
+    machineId: "machine-a",
+    workingDirectory: "/home/laop/.config/codexhub",
+    online: true,
+    status: "online",
+    lastSeenAt: "2026-01-01T00:00:00.000Z",
+    threads: []
+  };
+  let picker: ThreadPickerState | null = null;
+  const selectedProject = {
+    projectId: "project-videos",
+    machineId: "machine-a",
+    path: "/home/laop/projects/comfyui-sdk/videos",
+    name: "videos",
+    machineOnline: true
+  } as unknown as import("../../src/web/types.js").ProjectSummary;
+  const context = {
+    activeRuntime: runtime,
+    activeWorkspacePath: selectedProject.path,
+    projectList: [selectedProject],
+    runtimeList: [runtime],
+    selectedProject,
+    selectedProjectKey: "",
+    threadPicker: null,
+    setActiveMachineId: () => undefined,
+    setActiveWorkspacePath: () => undefined,
+    setProjectActionError: () => undefined,
+    setTaskError: () => undefined,
+    setThreadPicker: (value: ThreadPickerState | null | ((current: ThreadPickerState | null) => ThreadPickerState | null)) => {
+      picker = typeof value === "function" ? value(picker) : value;
+    }
+  } as unknown as Parameters<typeof createProjectActions>[0];
+  try {
+    const actions = createProjectActions(context, {} as Parameters<typeof createProjectActions>[1]);
+    await actions.openSelectedProjectThreadPicker();
+    const currentPicker = picker as ThreadPickerState | null;
+    assert.equal(currentPicker?.workingDirectory, selectedProject.path);
+    assert.deepEqual(currentPicker?.projectTarget, { machineId: "machine-a", path: selectedProject.path });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("thread picker path selection updates cwd origin and reloads matching candidates", async () => {
   const { createProjectActions } = await import("../../src/web/appActions/projectActions.js");
   const candidate = (threadId: string, cwd: string) => ({

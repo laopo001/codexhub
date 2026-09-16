@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import { Button, Dropdown, Modal, Switch } from "antd";
-import { X } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import remarkGfm from "remark-gfm";
 import { highlightedLanguages, isVscodeSurface, languageAliases } from "../appConfig.js";
 import { SubagentActivityMessage } from "../SubagentActivityMessage.js";
@@ -906,6 +906,82 @@ type MarkdownInteractionContextValue = {
 const MarkdownInteractionContext = React.createContext<MarkdownInteractionContextValue | null>(null);
 const markdownRemarkPlugins = [remarkGfm];
 
+const extractCodeText = (node: React.ReactNode): string => {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (!node) return "";
+  if (Array.isArray(node)) return node.map(extractCodeText).join("");
+  if (React.isValidElement(node) && node.props) {
+    return extractCodeText((node.props as { children?: React.ReactNode }).children);
+  }
+  return "";
+};
+
+const MarkdownCodeBlock = ({ children }: { children?: React.ReactNode }) => {
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  }, []);
+
+  const { codeText, language } = useMemo(() => {
+    let text = "";
+    let lang = "";
+    if (React.isValidElement(children)) {
+      text = extractCodeText((children.props as { children?: React.ReactNode })?.children);
+      const className = (children.props as { className?: string })?.className;
+      const rawLang = className?.match(/language-([\w-]+)/)?.[1]?.toLowerCase();
+      if (rawLang) {
+        lang = languageAliases[rawLang] ?? rawLang;
+      }
+    } else {
+      text = extractCodeText(children);
+    }
+    return {
+      codeText: text.replace(/\n$/, ""),
+      language: lang
+    };
+  }, [children]);
+
+  const handleCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!codeText) return;
+    try {
+      await writeTextToClipboard(codeText);
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // ignore clipboard error
+    }
+  };
+
+  return (
+    <div className="markdownCodeBlock">
+      <div className="markdownCodeBlockActions">
+        {language ? <span className="markdownCodeBlockLang">{language}</span> : null}
+        {codeText ? (
+          <button
+            type="button"
+            className={`markdownCodeCopyButton${copied ? " copied" : ""}`}
+            onClick={handleCopy}
+            title={copied ? "已复制" : "复制代码"}
+            aria-label={copied ? "已复制" : "复制代码"}
+          >
+            {copied ? <Check size={11} strokeWidth={2.4} aria-hidden="true" /> : <Copy size={11} strokeWidth={2} aria-hidden="true" />}
+            <span>{copied ? "已复制" : "复制"}</span>
+          </button>
+        ) : null}
+      </div>
+      <div className="markdownCodeBlockScroll">
+        {children}
+      </div>
+    </div>
+  );
+};
+
 export const markdownComponents: Components = {
   a: ({ children, href, className, title, ...props }) => {
     const interaction = React.useContext(MarkdownInteractionContext);
@@ -1004,9 +1080,9 @@ export const markdownComponents: Components = {
     );
   },
   pre: ({ children }) => (
-    <div className="markdownCodeBlock">
+    <MarkdownCodeBlock>
       {children}
-    </div>
+    </MarkdownCodeBlock>
   ),
   code: ({ children, className, ...props }) => {
     const language = markdownCodeLanguage(className);

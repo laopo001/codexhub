@@ -42,7 +42,7 @@ CLI、VSCode 和 Electron 在同一执行环境中共用一个 authority、配�
 
 ### 浏览器安装（PWA）
 
-通过浏览器访问 Web 入口后，使用地址栏中的安装图标，或浏览器菜单里的“安装 CodexHub”，即可把 CodexHub 安装成独立窗口。生产 server 和 `pnpm dev` 的 Web 端口都提供同一套 PWA manifest、Service Worker 和图标资源；首次打开页面后浏览器会自动注册 Service Worker。
+通过浏览器访问 Web 入口后，使用地址栏中的安装图标，或浏览器菜单里的“安装 CodexHub”，即可把 CodexHub 安装成独立窗口。生产 server 和 `pnpm dev` 的 Web 端口都提供同一套 PWA manifest、Service Worker 和图标资源；首次打开页面后浏览器会自动注册 Service Worker。Service Worker 只负责通知点击处理和清理旧缓存，不缓存或回退页面、JS、CSS 等应用资源；页面始终从当前 server 网络加载。
 
 `http://127.0.0.1:<port>` 和 `http://localhost:<port>` 属于浏览器认可的本地安全上下文，可以直接安装。通过局域网 IP（例如 `http://192.168.x.x:<port>`）访问时，浏览器通常要求 HTTPS；这属于浏览器的安全上下文规则，需要为该访问地址配置 HTTPS。
 

@@ -48,6 +48,7 @@ const loadServiceWorker = async () => {
   const swCode = await readFile(path.join(projectRoot, "public/codexhub-notification-sw.js"), "utf8");
   const handlers = new Map<string, (event: Record<string, unknown>) => void>();
   const deletedCacheNames: string[] = [];
+  const openedCacheNames: string[] = [];
   vm.runInNewContext(swCode, {
     URL,
     URLSearchParams,
@@ -59,11 +60,14 @@ const loadServiceWorker = async () => {
         deletedCacheNames.push(cacheName);
         return true;
       },
-      open: async () => ({
+      open: async (cacheName: string) => {
+        openedCacheNames.push(cacheName);
+        return {
         addAll: async () => undefined,
         match: async () => null,
         put: async () => undefined
-      })
+        };
+      }
     },
     self: {
       location: { origin: "http://127.0.0.1:28789" },
@@ -74,61 +78,29 @@ const loadServiceWorker = async () => {
       }
     }
   });
-  return { handlers, deletedCacheNames };
+  return { handlers, deletedCacheNames, openedCacheNames };
 };
 
-const serviceWorkerIntercepts = (
-  handler: (event: Record<string, unknown>) => void,
-  url: string,
-  options: { destination?: string; referrer?: string } = {}
-) => {
-  let intercepted = false;
+test("PWA service worker does not intercept application requests", async () => {
+  const { handlers } = await loadServiceWorker();
+  assert.equal(handlers.has("fetch"), false);
+});
+
+test("PWA service worker installation does not precache application resources", async () => {
+  const { handlers, openedCacheNames } = await loadServiceWorker();
+  const handler = handlers.get("install");
+  assert.ok(handler);
+  let installation: Promise<unknown> | undefined;
   handler({
-    request: {
-      method: "GET",
-      url,
-      destination: options.destination ?? "document",
-      referrer: options.referrer ?? ""
-    },
-    respondWith: (response: Promise<Response>) => {
-      intercepted = true;
-      void response.catch(() => undefined);
+    waitUntil: (promise: Promise<unknown>) => {
+      installation = promise;
     }
   });
-  return intercepted;
-};
-
-test("PWA service worker bypasses ordinary and whole-query embedded documents", async () => {
-  const { handlers } = await loadServiceWorker();
-  const handler = handlers.get("fetch");
-  assert.ok(handler);
-  assert.equal(serviceWorkerIntercepts(
-    handler,
-    "http://127.0.0.1:28789/?surface=vscode&workspacePath=%2Ftmp"
-  ), false);
-  assert.equal(serviceWorkerIntercepts(
-    handler,
-    "http://127.0.0.1:28789/?codexhub_token%3Dsecret%26surface%3Dvscode%26workspacePath%3D%252Ftmp"
-  ), false);
-  assert.equal(serviceWorkerIntercepts(
-    handler,
-    "http://127.0.0.1:28789/assets/index.js",
-    {
-      destination: "script",
-      referrer: "http://127.0.0.1:28789/?surface%3Delectron%26stateScope%3Dwindow-a"
-    }
-  ), false);
+  await installation;
+  assert.deepEqual(openedCacheNames, []);
 });
 
-test("PWA service worker retains document caching for standalone browser pages", async () => {
-  const { handlers } = await loadServiceWorker();
-  const handler = handlers.get("fetch");
-  assert.ok(handler);
-  assert.equal(serviceWorkerIntercepts(handler, "http://127.0.0.1:28789/"), true);
-  assert.equal(serviceWorkerIntercepts(handler, "http://127.0.0.1:28789/api/health"), false);
-});
-
-test("PWA service worker activation removes the previous shell cache only", async () => {
+test("PWA service worker activation removes every old shell cache", async () => {
   const { handlers, deletedCacheNames } = await loadServiceWorker();
   const handler = handlers.get("activate");
   assert.ok(handler);
@@ -139,7 +111,7 @@ test("PWA service worker activation removes the previous shell cache only", asyn
     }
   });
   await activation;
-  assert.deepEqual(deletedCacheNames, ["codexhub-shell-v1"]);
+  assert.deepEqual(deletedCacheNames, ["codexhub-shell-v1", "codexhub-shell-v2"]);
 });
 
 test("registerPwaServiceWorker skips registration in iframe", async () => {

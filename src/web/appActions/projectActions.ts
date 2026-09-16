@@ -57,6 +57,7 @@ type ProjectActionsContext = {
   selectedProjectKey: string;
   runtimeList: RuntimeSummary[];
   openThreads: OpenThreadState[];
+  selectedProject?: ProjectSummary | null;
   subagentThreadDialog: SubagentThreadDialogState | null;
   threadOrderByMachine: Record<string, string[]>;
   threadLastSeqs: React.MutableRefObject<Map<string, number>>;
@@ -344,9 +345,10 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
   };
 
   const openSelectedProjectThreadPicker = async () => {
-    const selectedProject = ctx.selectedProjectKey
-      ? ctx.projectList.find((project) => projectKeyForProject(project) === ctx.selectedProjectKey)
-      : undefined;
+    const selectedProject = ctx.selectedProject
+      ?? (ctx.selectedProjectKey
+        ? ctx.projectList.find((project) => projectKeyForProject(project) === ctx.selectedProjectKey)
+        : undefined);
     if (!selectedProject) {
       const runtime = ctx.activeRuntime;
       if (runtime?.online) openThreadPicker(runtime);

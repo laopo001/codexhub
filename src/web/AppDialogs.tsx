@@ -305,9 +305,9 @@ export const AppDialogs = ({ viewModel }: AppDialogsProps) => {
         ...projectList
           .filter((project) => project.machineId === threadPicker.machineId)
           .map((project) => ({ value: project.path, label: project.path })),
-        ...(projectList.some((project) =>
+        ...(!threadPicker.projectTarget && !projectList.some((project) =>
           project.machineId === threadPicker.machineId && project.path === threadPicker.workingDirectory
-        ) ? [] : [{ value: threadPicker.workingDirectory, label: threadPicker.workingDirectory }])
+        ) ? [{ value: threadPicker.workingDirectory, label: threadPicker.workingDirectory }] : [])
       ]
     : [];
   const threadPickerOpenThreadIds = new Set([
