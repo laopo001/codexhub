@@ -45,6 +45,20 @@ test("Markdown local file links expose the same action menu without external nav
   assert.doesNotMatch(markup, /rel="noopener noreferrer"/);
 });
 
+test("Markdown local file links display decoded non-ASCII paths", () => {
+  const path = "/tmp/特黄会谈AI危机-v1.mp4";
+  const encodedPath = encodeURI(path);
+  const markup = renderToStaticMarkup(createElement(MessageText, {
+    text: `已导出：[${encodedPath}](${encodedPath})`,
+    mode: "markdown",
+    markdownEnabled: true
+  }));
+
+  const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.match(markup, new RegExp(`>${escapedPath}</a>`));
+  assert.match(markup, /href="[^"]*%E[0-9A-F]/i);
+});
+
 test("VS Code webview bridge forwards only same-origin HTTP(S) external links", () => {
   const handlers = new Map<string, (event: { data: unknown; source: unknown; origin: string }) => void>();
   const vscodeMessages: unknown[] = [];

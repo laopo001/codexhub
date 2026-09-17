@@ -1121,10 +1121,11 @@ const localFileLinkTargetFromHref = (
   const location = splitFileLocation(filePath);
   if (!isFileUrl && !hasFileLinkSignal(location)) return null;
   const fullPath = normalizePathSeparators(location.path);
+  const title = `${fullPath}${location.line ? `:${location.line}` : ""}${location.column ? `:${location.column}` : ""}`;
   return {
     ...location,
     fullPath,
-    title: href
+    title
   };
 };
 
