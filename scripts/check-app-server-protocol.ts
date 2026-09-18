@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
   assertSupportedCodexCliVersion,
   minimumCodexCliVersion,
-  parseCodexCliVersion
+  parseCodexCliVersion,
+  resolveCodexCommand
 } from "../src/cli/codexAppServerProcess.js";
 import { codexhubVersion } from "../src/shared/version.js";
 
@@ -15,15 +16,10 @@ const repoRoot = process.cwd();
 const minimumVersion = minimumCodexCliVersion;
 const packageManifest = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as {
   version?: string;
-  devDependencies?: Record<string, string>;
 };
 
 if (packageManifest.version !== codexhubVersion) {
   throw new Error(`src/shared/version.ts must match package.json (${packageManifest.version ?? "missing"}).`);
-}
-
-if (packageManifest.devDependencies?.["@openai/codex"] !== minimumVersion) {
-  throw new Error(`@openai/codex must be pinned to ${minimumVersion} for deterministic protocol checks.`);
 }
 
 const codex = await resolveProtocolCodex();
@@ -251,15 +247,7 @@ console.log(`app-server protocol ok: codex-cli ${actualVersion} (minimum ${minim
 type CodexCommand = { command: string; argsPrefix: string[] };
 
 async function resolveProtocolCodex(): Promise<CodexCommand> {
-  const override = process.env.CODEX_HUB_PROTOCOL_CODEX?.trim();
-  if (override) return { command: override, argsPrefix: [] };
-  const entrypoint = path.join(repoRoot, "node_modules", "@openai", "codex", "bin", "codex.js");
-  try {
-    await access(entrypoint);
-    return { command: process.execPath, argsPrefix: [entrypoint] };
-  } catch {
-    throw new Error(`Pinned Codex CLI not installed at ${entrypoint}. Run pnpm install first.`);
-  }
+  return { command: await resolveCodexCommand(), argsPrefix: [] };
 }
 
 async function runCodex(codex: CodexCommand, args: string[]) {

@@ -293,7 +293,7 @@ export const resolveCodexCommand = async () => {
   for (const candidate of codexCommandCandidates()) {
     if (candidate && await fileExists(candidate)) return candidate;
   }
-  throw new Error("codex CLI not found. Install @openai/codex or set CODEX_HUB_CODEX_CLI to the codex executable path.");
+  throw new Error("codex CLI not found. Install the Codex CLI or set CODEX_HUB_CODEX_CLI to the codex executable path.");
 };
 
 export const readCodexCliVersion = async (codexCommand: string) => {
