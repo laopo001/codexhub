@@ -38,6 +38,9 @@ import {
 } from "./helpers/pendingThreadRestore.js";
 
 const webClientHeartbeatMs = 10_000;
+const hiddenWebClientHeartbeatMs = 60_000;
+const authorityHealthRefreshMs = 30_000;
+const hiddenAuthorityHealthRefreshMs = 120_000;
 
 type AppEffectsActions = {
   clearActiveThreadIfLatest: (threadId: string) => void;
@@ -132,16 +135,32 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
       },
       requestRecovery
     });
+    let timer: number | null = null;
+    const clearHeartbeatTimer = () => {
+      if (timer === null) return;
+      window.clearTimeout(timer);
+      timer = null;
+    };
+    const scheduleHeartbeat = () => {
+      if (disposed) return;
+      clearHeartbeatTimer();
+      timer = window.setTimeout(() => {
+        timer = null;
+        void heartbeat.beat();
+        scheduleHeartbeat();
+      }, document.visibilityState === "visible" ? webClientHeartbeatMs : hiddenWebClientHeartbeatMs);
+    };
     const beatWhenVisible = () => {
       if (document.visibilityState === "visible") void heartbeat.beat();
+      scheduleHeartbeat();
     };
-    const timer = window.setInterval(() => void heartbeat.beat(), webClientHeartbeatMs);
     document.addEventListener("visibilitychange", beatWhenVisible);
     window.addEventListener("pageshow", beatWhenVisible);
     void heartbeat.beat();
+    scheduleHeartbeat();
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      clearHeartbeatTimer();
       document.removeEventListener("visibilitychange", beatWhenVisible);
       window.removeEventListener("pageshow", beatWhenVisible);
     };
@@ -166,11 +185,32 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
         // Keep the last confirmed update state while the authority is temporarily unavailable.
       }
     };
-    const timer = window.setInterval(() => void refreshAuthorityUpdate(), 5_000);
-    void refreshAuthorityUpdate();
+    let timer: number | null = null;
+    const clearRefreshTimer = () => {
+      if (timer === null) return;
+      window.clearTimeout(timer);
+      timer = null;
+    };
+    const scheduleRefresh = () => {
+      if (disposed) return;
+      clearRefreshTimer();
+      timer = window.setTimeout(() => {
+        timer = null;
+        void refreshAuthorityUpdate().finally(scheduleRefresh);
+      }, document.visibilityState === "visible" ? authorityHealthRefreshMs : hiddenAuthorityHealthRefreshMs);
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshAuthorityUpdate();
+      scheduleRefresh();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("pageshow", refreshWhenVisible);
+    void refreshAuthorityUpdate().finally(scheduleRefresh);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      clearRefreshTimer();
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("pageshow", refreshWhenVisible);
     };
   }, [state.initialized, state.systemStatus.authority?.authorityId]);
 

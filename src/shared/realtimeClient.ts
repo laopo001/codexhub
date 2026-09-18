@@ -71,6 +71,7 @@ export const threadCursorAfterEvent = (
   return event.snapshot.complete ? event.seq : current ?? 0;
 };
 const webSocketOpenState = 1;
+const threadDeltaBatchWindowMs = 16;
 
 export class CodexHubRealtimeClient {
   private openThreads: OpenThreadPresence[] = [];
@@ -80,6 +81,8 @@ export class CodexHubRealtimeClient {
   private stopped = true;
   private readonly subscriptions = new Map<string, number>();
   private readonly cursors: Required<RealtimeControlCursors>;
+  private bufferedThreadDeltas: RealtimeMessage[] = [];
+  private bufferedThreadDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: CodexHubRealtimeClientOptions) {
     this.cursors = {
@@ -99,6 +102,7 @@ export class CodexHubRealtimeClient {
   disconnect() {
     this.stopped = true;
     this.clearReconnectTimer();
+    this.flushBufferedThreadDeltas();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -131,6 +135,7 @@ export class CodexHubRealtimeClient {
     this.supportsOpenThreadPresence = false;
     const previous = this.socket;
     this.socket = null;
+    this.flushBufferedThreadDeltas();
     previous?.close();
 
     const url = typeof this.options.url === "function" ? this.options.url() : this.options.url;
@@ -150,7 +155,13 @@ export class CodexHubRealtimeClient {
       const message = parseRealtimeMessage(event.data);
       if (!message) return;
       this.rememberIncoming(message);
-      void Promise.resolve(this.options.onMessage(message)).catch((error) => this.options.onError?.(error));
+      if (message.type === "record_delta") {
+        this.bufferedThreadDeltas.push(message);
+        this.scheduleThreadDeltaFlush();
+        return;
+      }
+      this.flushBufferedThreadDeltas();
+      this.deliverMessage(message);
     });
     socket.addEventListener("error", () => {
       if (this.socket === socket) socket.close();
@@ -158,6 +169,7 @@ export class CodexHubRealtimeClient {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.flushBufferedThreadDeltas();
       this.options.onClose?.();
       this.scheduleReconnect();
     });
@@ -213,5 +225,27 @@ export class CodexHubRealtimeClient {
     if (this.reconnectTimer === null) return;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+
+  private scheduleThreadDeltaFlush() {
+    if (this.bufferedThreadDeltaTimer !== null) return;
+    this.bufferedThreadDeltaTimer = setTimeout(() => {
+      this.bufferedThreadDeltaTimer = null;
+      this.flushBufferedThreadDeltas();
+    }, threadDeltaBatchWindowMs);
+  }
+
+  private flushBufferedThreadDeltas() {
+    if (this.bufferedThreadDeltaTimer !== null) {
+      clearTimeout(this.bufferedThreadDeltaTimer);
+      this.bufferedThreadDeltaTimer = null;
+    }
+    const messages = this.bufferedThreadDeltas;
+    this.bufferedThreadDeltas = [];
+    for (const message of messages) this.deliverMessage(message);
+  }
+
+  private deliverMessage(message: RealtimeMessage) {
+    void Promise.resolve(this.options.onMessage(message)).catch((error) => this.options.onError?.(error));
   }
 }

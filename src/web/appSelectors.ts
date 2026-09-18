@@ -246,11 +246,11 @@ export const useAppSelectors = (state: AppState) => {
   const openThreadIdsKey = openThreadIds.join("\n");
   const displayRecords = useMemo(
     () => activeThread ? threadDisplayRecords(activeThread.threadId, activeThread) : [],
-    [activeThread?.records, activeThread?.threadId]
+    [activeThread?.records, activeThread?.recordVersion, activeThread?.threadId]
   );
   const goalRecords = useMemo(
     () => combineRecordSources(displayRecords, activeThread?.records ?? []),
-    [activeThread?.records, displayRecords]
+    [activeThread?.records, activeThread?.recordVersion, displayRecords]
   );
   const latestTurnActivity = useMemo(
     () => activeThread?.status === "waiting"
@@ -261,7 +261,7 @@ export const useAppSelectors = (state: AppState) => {
           turnStatus: null
         }
       : latestTurnActivityScope(displayRecords, activeThread?.activeTurnId),
-    [activeThread?.activeTurnId, activeThread?.status, displayRecords]
+    [activeThread?.activeTurnId, activeThread?.recordVersion, activeThread?.status, displayRecords]
   );
   const activeGoal = useMemo(
     () => latestThreadGoalFromRecords(goalRecords, activeThread?.threadId),
@@ -271,7 +271,7 @@ export const useAppSelectors = (state: AppState) => {
     () => activeGoal
       ? activeGoalActivityScopeFromRecords(displayRecords, activeThread?.threadId)
       : null,
-    [activeGoal, activeThread?.threadId, displayRecords]
+    [activeGoal, activeThread?.recordVersion, activeThread?.threadId, displayRecords]
   );
   const latestTurnStatuses = useMemo(
     () => activityStatusesFromRecords(activeGoalActivity?.records ?? latestTurnActivity.records),
@@ -289,7 +289,7 @@ export const useAppSelectors = (state: AppState) => {
       latestTurnRunning ? latestTurnActivity.turnId : undefined,
       activeThread?.threadId
     ),
-    [activeThread?.threadId, displayRecords, latestTurnActivity.turnId, latestTurnRunning]
+    [activeThread?.recordVersion, activeThread?.threadId, displayRecords, latestTurnActivity.turnId, latestTurnRunning]
   );
   const statusActivityKey = activeGoalActivity?.key ?? latestTurnActivity.key;
   const statusScopeKey = activeThread?.threadId && statusActivityKey
@@ -313,11 +313,11 @@ export const useAppSelectors = (state: AppState) => {
   );
   const baseViews = useMemo(
     () => conversationViewsFromRecords(displayRecords, activeExpandedToolBatchKeys),
-    [activeExpandedToolBatchKeys, displayRecords]
+    [activeExpandedToolBatchKeys, activeThread?.recordVersion, displayRecords]
   );
   const turnDurations = useMemo(
     () => turnDurationMapFromRecords(displayRecords),
-    [displayRecords]
+    [activeThread?.recordVersion, displayRecords]
   );
   const activeViews = useMemo<WebRecordView[]>(
     () => [
@@ -330,7 +330,7 @@ export const useAppSelectors = (state: AppState) => {
       ),
       ...pendingUserMessageViews(activeThread?.pendingUserMessages ?? [], activeThread?.queuedTurns ?? [])
     ],
-    [activeThread?.pendingUserMessages, activeThread?.queuedTurns, activityStatusSnapshots, baseViews, turnDurations]
+    [activeThread?.pendingUserMessages, activeThread?.queuedTurns, activeThread?.recordVersion, activityStatusSnapshots, baseViews, turnDurations]
   );
   const inspectMessage = useMemo(() => {
     const selection = state.inspectMessageSelection;
@@ -361,7 +361,7 @@ export const useAppSelectors = (state: AppState) => {
   ]);
   const activeUserMessageHistory = useMemo(
     () => userMessageHistoryFromRecords(displayRecords, activeThread?.pendingUserMessages, activeThread?.queuedTurns),
-    [activeThread?.pendingUserMessages, activeThread?.queuedTurns, displayRecords]
+    [activeThread?.pendingUserMessages, activeThread?.queuedTurns, activeThread?.recordVersion, displayRecords]
   );
   const activeDisplayThreadId = activeThread?.threadId ?? state.activeTabThreadId;
   const activeThreadIsOpen = Boolean(activeThread && openThreadIds.includes(activeThread.threadId));
@@ -388,7 +388,7 @@ export const useAppSelectors = (state: AppState) => {
     : "No runtime";
   const latestThreadUsage = useMemo(
     () => latestThreadUsageFromRecords(latestTurnActivity.records) ?? latestThreadUsageFromRecords(displayRecords),
-    [displayRecords, latestTurnActivity.records]
+    [activeThread?.recordVersion, displayRecords, latestTurnActivity.records]
   );
   const summaryThreadUsage = activeThread?.threadUsage
     ?? activeThreadSummary?.threadUsage
@@ -403,7 +403,7 @@ export const useAppSelectors = (state: AppState) => {
   );
   const latestThreadConfig = useMemo(
     () => latestThreadConfigFromRecords(latestTurnActivity.records) ?? latestThreadConfigFromRecords(displayRecords),
-    [displayRecords, latestTurnActivity.records]
+    [activeThread?.recordVersion, displayRecords, latestTurnActivity.records]
   );
   const activeThreadModel = latestThreadConfig?.model
     ?? activeThread?.model

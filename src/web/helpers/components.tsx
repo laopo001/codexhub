@@ -55,7 +55,7 @@ const isFileApiUrl = (url: string) => {
   }
 };
 
-export const MessageCard = ({
+const MessageCardView = ({
   message,
   showStatus = true,
   showTimestamp = true,
@@ -304,6 +304,59 @@ export const MessageCard = ({
     </article>
   );
 };
+
+const sameToolBatch = (left: WebRecordView["toolBatch"], right: WebRecordView["toolBatch"]) => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.key === right.key
+    && left.count === right.count
+    && left.expanded === right.expanded
+    && left.labels.join("\u0000") === right.labels.join("\u0000");
+};
+
+const sameAttachments = (left: WebRecordView["attachments"], right: WebRecordView["attachments"]) => {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((attachment, index) => {
+    const other = right[index];
+    return attachment.type === other?.type && attachment.url === other?.url;
+  });
+};
+
+const messageCardPropsEqual = (
+  previous: React.ComponentProps<typeof MessageCardView>,
+  next: React.ComponentProps<typeof MessageCardView>
+) => {
+  const left = previous.message;
+  const right = next.message;
+  return left.id === right.id
+    && left.record === right.record
+    && left.text === right.text
+    && left.label === right.label
+    && left.role === right.role
+    && left.status === right.status
+    && left.statusText === right.statusText
+    && left.statusDurationMs === right.statusDurationMs
+    && left.activityStatuses === right.activityStatuses
+    && sameToolBatch(left.toolBatch, right.toolBatch)
+    && sameAttachments(left.attachments, right.attachments)
+    && previous.showStatus === next.showStatus
+    && previous.showTimestamp === next.showTimestamp
+    && previous.renderToolPreview === next.renderToolPreview
+    && previous.renderMode === next.renderMode
+    && previous.markdownEnabled === next.markdownEnabled
+    && previous.threadId === next.threadId
+    && previous.threadMachineId === next.threadMachineId
+    && previous.threadWorkingDirectory === next.threadWorkingDirectory
+    && previous.dismissLabel === next.dismissLabel
+    && previous.forkDisabled === next.forkDisabled
+    && previous.forking === next.forking;
+};
+
+// ThreadConversation creates thread-scoped action closures while rendering its
+// virtualized rows. Compare the rendered message state instead of callback
+// identity so completed rows stay mounted while the live row changes.
+export const MessageCard = React.memo(MessageCardView, messageCardPropsEqual);
 
 const AgentQuestionForm = ({
   threadId,
@@ -678,7 +731,7 @@ export const markdownCodeLanguage = (className: string | undefined) => {
   return highlightedLanguages.has(normalized) ? normalized : null;
 };
 
-export const MessageText = ({
+const MessageTextView = ({
   text,
   mode,
   markdownEnabled,
@@ -723,6 +776,14 @@ export const MessageText = ({
     </div>
   );
 };
+
+export const MessageText = React.memo(MessageTextView, (previous, next) => (
+  previous.text === next.text
+  && previous.mode === next.mode
+  && previous.markdownEnabled === next.markdownEnabled
+  && previous.threadMachineId === next.threadMachineId
+  && previous.threadWorkingDirectory === next.threadWorkingDirectory
+));
 
 const markdownUrlTransform: UrlTransform = (url, key) => {
   if (key === "href" && localFileLinkTargetFromHref(url)) return url;

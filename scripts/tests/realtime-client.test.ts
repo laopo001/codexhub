@@ -80,6 +80,42 @@ test("realtime client replays advanced cursors and thread subscriptions after re
   client.disconnect();
 });
 
+test("realtime client delivers rapid record deltas in one dispatch window", async () => {
+  const sockets: FakeSocket[] = [];
+  const received: unknown[] = [];
+  const client = new CodexHubRealtimeClient({
+    url: "ws://localhost/api/events/ws",
+    reconnectDelayMs: null,
+    webSocketFactory: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    },
+    onMessage: (message) => {
+      received.push(message);
+    }
+  });
+
+  client.connect();
+  sockets[0].open();
+  sockets[0].message({
+    type: "record_delta",
+    seq: 1,
+    thread: { threadId: "thread-1" },
+    delta: { recordId: "record-1", field: "aggregated_output", append: "a" }
+  });
+  sockets[0].message({
+    type: "record_delta",
+    seq: 2,
+    thread: { threadId: "thread-1" },
+    delta: { recordId: "record-1", field: "aggregated_output", append: "b" }
+  });
+  assert.equal(received.length, 0);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual((received as Array<{ seq: number }>).map((message) => message.seq), [1, 2]);
+  client.disconnect();
+});
+
 test("realtime canonical snapshots reset a stale thread cursor", async () => {
   const sockets: FakeSocket[] = [];
   const client = new CodexHubRealtimeClient({

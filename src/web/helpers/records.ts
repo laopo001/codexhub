@@ -19,6 +19,7 @@ import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, isFastServiceTier, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
 import { turnDurationMsForTurn } from "./turnDurations.js";
+import { bumpRecordVersion, recordVersionFor } from "./recordVersion.js";
 
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
   const usage = threadUsageFromRecords(records);
@@ -261,8 +262,66 @@ export const formatPercent = (value: number) => {
   return `${Number.isInteger(normalized) ? normalized : normalized.toFixed(1)}%`;
 };
 
+type WebRecordIndex = {
+  records: CodexRecord[];
+  byId: Map<string, number>;
+  orderedIds: string[];
+  transcriptIdByKey: Map<string, string>;
+  currentRecordId?: string;
+  ordered: boolean;
+  uniqueIds: boolean;
+  uniqueTranscriptKeys: boolean;
+};
+
+// Web reducer outputs are immutable arrays. Keep the normalized lookup data
+// beside each array without adding Maps to the public ThreadDetail shape.
+// This makes repeated delta/reconciliation work O(1) for the common case and
+// lets the projection layer keep its own cache independent of server state.
+const webRecordIndexes = new WeakMap<CodexRecord[], WebRecordIndex>();
+const activityStatusCache = new WeakMap<CodexRecord[], { version: number; value: ActivityStatusView[] }>();
+
+const webRecordIndexFor = (records: CodexRecord[]): WebRecordIndex => {
+  const cached = webRecordIndexes.get(records);
+  if (cached) return cached;
+
+  const byId = new Map<string, number>();
+  const orderedIds: string[] = [];
+  const transcriptIdByKey = new Map<string, string>();
+  let ordered = true;
+  let uniqueIds = true;
+  let uniqueTranscriptKeys = true;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (index > 0 && compareCodexRecords(records[index - 1], record) > 0) ordered = false;
+    if (byId.has(record.id)) uniqueIds = false;
+    byId.set(record.id, index);
+    orderedIds.push(record.id);
+    const transcriptKey = appServerTranscriptRecordKey(record);
+    if (transcriptKey !== null) {
+      const existingId = transcriptIdByKey.get(transcriptKey);
+      if (existingId !== undefined) uniqueTranscriptKeys = false;
+      transcriptIdByKey.set(transcriptKey, record.id);
+    }
+  }
+  const next = {
+    records,
+    byId,
+    orderedIds,
+    transcriptIdByKey,
+    currentRecordId: records.at(-1)?.id,
+    ordered,
+    uniqueIds,
+    uniqueTranscriptKeys
+  } satisfies WebRecordIndex;
+  webRecordIndexes.set(records, next);
+  return next;
+};
+
 export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
-  const existingIndex = records.findIndex((record) => record.id === incoming.id);
+  const sourceIndex = webRecordIndexFor(records);
+  const existingIndex = sourceIndex.uniqueIds
+    ? sourceIndex.byId.get(incoming.id) ?? -1
+    : records.findIndex((record) => record.id === incoming.id);
   if (existingIndex !== -1) {
     if (records[existingIndex] === incoming) return records;
     const next = records.slice();
@@ -276,8 +335,38 @@ export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
     next.splice(existingIndex, 1);
     return insertOrderedRecord(next, incoming);
   }
-  const withoutTranscriptDuplicate = records.filter((record) => !isMatchingAppServerTranscriptRecord(record, incoming));
-  return insertOrderedRecord(withoutTranscriptDuplicate, incoming);
+
+  // With an explicit source thread, the transcript key is fixed for every
+  // existing record. Avoid recomputing the incoming key for every candidate.
+  // When sourceThreadId is absent, the legacy matcher may derive the thread
+  // from each existing record, so retain the exact per-record fallback.
+  const sourceThreadId = incoming.sourceThreadId;
+  if (sourceThreadId !== undefined && sourceThreadId !== null) {
+    const threadId = String(sourceThreadId);
+    const incomingKey = appServerTranscriptRecordKey(incoming, threadId);
+    if (incomingKey === null) return insertOrderedRecord(records, incoming);
+    let withoutTranscriptDuplicate: CodexRecord[] | undefined;
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (appServerTranscriptRecordKey(record, threadId) === incomingKey) {
+        withoutTranscriptDuplicate ??= records.slice(0, index);
+        continue;
+      }
+      withoutTranscriptDuplicate?.push(record);
+    }
+    return insertOrderedRecord(withoutTranscriptDuplicate ?? records, incoming);
+  }
+
+  let withoutTranscriptDuplicate: CodexRecord[] | undefined;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (isMatchingAppServerTranscriptRecord(record, incoming)) {
+      withoutTranscriptDuplicate ??= records.slice(0, index);
+      continue;
+    }
+    withoutTranscriptDuplicate?.push(record);
+  }
+  return insertOrderedRecord(withoutTranscriptDuplicate ?? records, incoming);
 };
 
 const insertOrderedRecord = (records: CodexRecord[], incoming: CodexRecord) => {
@@ -292,6 +381,16 @@ const insertOrderedRecord = (records: CodexRecord[], incoming: CodexRecord) => {
 };
 
 export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {
+  // Selectors commonly combine a projected view with the same canonical
+  // records array. Reuse it only after confirming the input is already
+  // deduplicated and ordered; history batches may still arrive unsorted.
+  if (left === right && orderedRecordSourceIdentity(left)) return left;
+  if (!left.length && orderedRecordSourceIdentity(right)) return right;
+  if (!right.length && orderedRecordSourceIdentity(left)) return left;
+
+  const orderedMerge = tryMergeOrderedRecordSources(left, right);
+  if (orderedMerge) return orderedMerge;
+
   const byId = new Map<string, CodexRecord>();
   const idByTranscriptKey = new Map<string, string>();
   const put = (record: CodexRecord) => {
@@ -313,11 +412,58 @@ export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) 
   return orderCodexRecords([...byId.values()]);
 };
 
+/**
+ * Most Web merges combine already canonical, immutable snapshots with a
+ * canonical batch of new records. In that case a stable linear merge is
+ * equivalent to the Map-plus-sort implementation below. Return null whenever
+ * a source needs replacement or semantic deduplication so the existing
+ * implementation remains the authority for those cases.
+ */
+const tryMergeOrderedRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {
+  const leftIdentity = orderedRecordSourceIdentity(left);
+  const rightIdentity = orderedRecordSourceIdentity(right);
+  if (!leftIdentity || !rightIdentity) return null;
+
+  for (const id of rightIdentity.ids) {
+    if (leftIdentity.ids.has(id)) return null;
+  }
+  for (const key of rightIdentity.transcriptKeys) {
+    if (leftIdentity.transcriptKeys.has(key)) return null;
+  }
+
+  const merged: CodexRecord[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (compareCodexRecords(left[leftIndex], right[rightIndex]) <= 0) {
+      merged.push(left[leftIndex]);
+      leftIndex += 1;
+    } else {
+      merged.push(right[rightIndex]);
+      rightIndex += 1;
+    }
+  }
+  merged.push(...left.slice(leftIndex), ...right.slice(rightIndex));
+  return merged;
+};
+
+const orderedRecordSourceIdentity = (records: CodexRecord[]) => {
+  const index = webRecordIndexFor(records);
+  if (!index.ordered || !index.uniqueIds || !index.uniqueTranscriptKeys) return null;
+  return {
+    ids: new Set(index.orderedIds),
+    transcriptKeys: new Set(index.transcriptIdByKey.keys())
+  };
+};
+
 export const applyThreadRecordDelta = (
   records: CodexRecord[],
   delta: NonNullable<StreamEvent["delta"]>
 ) => {
-  const index = records.findIndex((record) => record.id === delta.recordId);
+  const recordIndex = webRecordIndexFor(records);
+  const index = recordIndex.uniqueIds
+    ? recordIndex.byId.get(delta.recordId) ?? -1
+    : records.findIndex((record) => record.id === delta.recordId);
   if (index === -1) return records;
   const record = records[index];
   const payload = asRecord(record.payload);
@@ -331,7 +477,34 @@ export const applyThreadRecordDelta = (
       [delta.field]: current + delta.append
     }
   };
+  webRecordIndexFor(next).currentRecordId = delta.recordId;
   return next;
+};
+
+/** Apply a high-frequency live delta without copying the surrounding record array. */
+export const applyThreadRecordDeltaInPlace = (
+  records: CodexRecord[],
+  delta: NonNullable<StreamEvent["delta"]>
+) => {
+  const recordIndex = webRecordIndexFor(records);
+  const index = recordIndex.uniqueIds
+    ? recordIndex.byId.get(delta.recordId) ?? -1
+    : records.findIndex((record) => record.id === delta.recordId);
+  if (index === -1) return false;
+  const record = records[index];
+  const payload = asRecord(record.payload);
+  if (!payload) return false;
+  const current = typeof payload[delta.field] === "string" ? payload[delta.field] : "";
+  records[index] = {
+    ...record,
+    payload: {
+      ...payload,
+      [delta.field]: current + delta.append
+    }
+  };
+  recordIndex.currentRecordId = delta.recordId;
+  bumpRecordVersion(records);
+  return true;
 };
 
 export const threadDisplayRecords = (
@@ -608,6 +781,9 @@ const formatTurnActivityScopeTime = (timestamp: string | undefined, source: "tur
 };
 
 export const activityStatusesFromRecords = (records: CodexRecord[]): ActivityStatusView[] => {
+  const version = recordVersionFor(records);
+  const cached = activityStatusCache.get(records);
+  if (cached?.version === version) return cached.value;
   const statuses = new Map<string, ActivityStatusView>();
   let fileStatus: ActivityStatusView | null = null;
   let scopedUsage: Record<string, number> | null = null;
@@ -638,9 +814,11 @@ export const activityStatusesFromRecords = (records: CodexRecord[]): ActivitySta
       summaryText: formatUsageSummary(scopedUsage)
     });
   }
-  return [...statuses.values()]
+  const result = [...statuses.values()]
     .filter(isActivityStatusDetail)
     .sort((left, right) => activityStatusPriority(left.key) - activityStatusPriority(right.key));
+  activityStatusCache.set(records, { version, value: result });
+  return result;
 };
 
 export const activityStatusSnapshotsFromRecords = (

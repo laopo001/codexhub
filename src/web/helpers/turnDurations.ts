@@ -1,4 +1,7 @@
 import { asRecord, type CodexRecord, type CodexRecordView } from "../../shared/recordTypes.js";
+import { recordVersionFor } from "./recordVersion.js";
+
+const turnDurationCache = new WeakMap<CodexRecord[], { version: number; value: Map<string, number> }>();
 
 export const finalAnswerViewsWithTurnDurations = <T extends CodexRecordView>(
   views: T[],
@@ -17,6 +20,9 @@ export const finalAnswerViewsWithTurnDurations = <T extends CodexRecordView>(
   });
 
 export const turnDurationMapFromRecords = (records: CodexRecord[]) => {
+  const version = recordVersionFor(records);
+  const cached = turnDurationCache.get(records);
+  if (cached?.version === version) return cached.value;
   const durationByTurn = new Map<string, number>();
   for (const record of records) {
     const payload = asRecord(record.payload);
@@ -31,6 +37,7 @@ export const turnDurationMapFromRecords = (records: CodexRecord[]) => {
       : undefined;
     if (direct != null) durationByTurn.set(turnId, direct);
   }
+  turnDurationCache.set(records, { version, value: durationByTurn });
   return durationByTurn;
 };
 

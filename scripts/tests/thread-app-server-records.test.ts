@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { recordToView } from "../../src/core/codexRecordView.js";
+import { recordToView, recordsToViews } from "../../src/core/codexRecordView.js";
 import { fileChanges } from "../../src/core/threadApprovalRecords.js";
 import { ThreadHub } from "../../src/core/threadHub.js";
 import {
@@ -410,6 +410,57 @@ test("status usage is accumulated independently for each returned app-server Tur
       total_tokens: 80
     }
   }]);
+});
+
+test("ThreadHub keeps messageCount incremental across token usage append and replacement", () => {
+  const hub = new ThreadHub();
+  const sessionId = "message-count-usage-session";
+  const threadId = "message-count-usage-thread";
+  hub.registerSession({ sessionId, machineId: sessionId, workingDirectory: "/tmp/message-count-usage" });
+
+  const assertMessageCount = () => {
+    const detail = hub.getThread(threadId);
+    assert.ok(detail);
+    assert.equal(detail.messageCount, recordsToViews(detail.records).length);
+  };
+  const emitUsage = (totalTokens: number) => hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId,
+        turnId: "message-count-turn",
+        tokenUsage: {
+          last: { inputTokens: totalTokens, outputTokens: 1, totalTokens: totalTokens + 1 },
+          total: { inputTokens: totalTokens, outputTokens: 1, totalTokens: totalTokens + 1 },
+          modelContextWindow: 200_000
+        }
+      }
+    }
+  });
+
+  emitUsage(10);
+  assertMessageCount();
+  hub.applySessionEvent(sessionId, {
+    type: "thread_event",
+    threadId,
+    message: {
+      method: "item/completed",
+      params: {
+        threadId,
+        turnId: "message-count-turn",
+        completedAtMs: 2,
+        item: { id: "message-count-agent", type: "agentMessage", text: "reply", phase: "final_answer" }
+      }
+    }
+  });
+  assertMessageCount();
+
+  emitUsage(20);
+  assertMessageCount();
+  emitUsage(20);
+  assertMessageCount();
 });
 
 test("terminal Turn status produces the authoritative lifecycle record even without timing", () => {

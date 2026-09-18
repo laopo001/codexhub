@@ -264,7 +264,7 @@ export const ThreadConversation = ({
   const showTurnLoadingMessage = executionStatus === "waiting" || executionStatus === "running";
   const backgroundTerminals = React.useMemo(
     () => backgroundTerminalViewsFromThread(thread),
-    [thread.backgroundTerminals, thread.records]
+    [thread.backgroundTerminals, thread.recordVersion, thread.records]
   );
   // The Thread card is always mounted; the Turn card below is mounted only
   // while the thread has an active Waiting/Running Turn.

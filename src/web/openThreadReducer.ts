@@ -20,7 +20,7 @@ import type {
   ServiceTierSelection,
   ThreadDetail
 } from "./types.js";
-import { applyThreadRecordDelta, combineRecordSources, mergeRecord } from "./helpers/records.js";
+import { applyThreadRecordDelta, applyThreadRecordDeltaInPlace, combineRecordSources, mergeRecord } from "./helpers/records.js";
 import { normalizeHistoryMessageText, normalizeSelectedText } from "./helpers/composer.js";
 
 type DraftAction =
@@ -72,6 +72,9 @@ export const openThreadStateFromDetail = (
   existing?: OpenThreadState
 ): OpenThreadState => ({
   ...thread,
+  recordVersion: existing
+    ? existing.records === thread.records ? existing.recordVersion : (existing.recordVersion ?? 0) + 1
+    : 0,
   ...((thread.developerInstruction ?? existing?.developerInstruction)
     ? { developerInstruction: thread.developerInstruction ?? existing?.developerInstruction }
     : {}),
@@ -183,11 +186,13 @@ export const reduceConversationThreadState = (
     };
   }
   if (action.type === "merge-history") {
+    const records = combineRecordSources(action.thread.records, thread.records);
     return {
       ...thread,
       ...action.thread,
       source: action.thread.source,
-      records: combineRecordSources(action.thread.records, thread.records),
+      records,
+      recordVersion: records === thread.records ? thread.recordVersion ?? 0 : (thread.recordVersion ?? 0) + 1,
       history: action.thread.history ?? thread.history,
       backgroundTerminals: action.thread.backgroundTerminals ?? thread.backgroundTerminals
     };
@@ -201,9 +206,16 @@ export const reduceConversationThreadState = (
     const mergedRecords = action.record
       ? mergeRecord(snapshotRecords, action.record)
       : snapshotRecords;
-    const records = action.delta
-      ? applyThreadRecordDelta(mergedRecords, action.delta)
-      : mergedRecords;
+    let records = mergedRecords;
+    let recordChanged = records !== thread.records;
+    if (action.delta) {
+      if (records === thread.records) {
+        recordChanged = applyThreadRecordDeltaInPlace(records, action.delta) || recordChanged;
+      } else {
+        records = applyThreadRecordDelta(records, action.delta);
+        recordChanged = records !== mergedRecords || recordChanged;
+      }
+    }
     const queuedTurns = action.queue ?? thread.queuedTurns;
     const reconciledPending = reconcilePendingUserMessages(
       thread.pendingUserMessages,
@@ -216,6 +228,7 @@ export const reduceConversationThreadState = (
       ...(action.backgroundTerminals === undefined ? {} : { backgroundTerminals: action.backgroundTerminals }),
       history: action.snapshot?.history ?? thread.history,
       records,
+      recordVersion: recordChanged ? (thread.recordVersion ?? 0) + 1 : thread.recordVersion,
       queuedTurns,
       pendingUserMessages: reconcilePendingUserMessagesWithQueue(
         reconciledPending,
@@ -225,7 +238,7 @@ export const reduceConversationThreadState = (
     };
   }
   if (action.type === "append-record") {
-    return { ...thread, records: [...thread.records, action.record] };
+    return { ...thread, records: [...thread.records, action.record], recordVersion: (thread.recordVersion ?? 0) + 1 };
   }
   if (action.type === "enqueue-user-message") {
     return { ...thread, pendingUserMessages: [...thread.pendingUserMessages, action.message] };

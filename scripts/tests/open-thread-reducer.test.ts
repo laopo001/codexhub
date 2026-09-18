@@ -358,6 +358,8 @@ test("open thread reducer replaces stale snapshots and applies command output de
       complete: true
     }
   });
+  const recordsBeforeDelta = state[0].records;
+  const versionBeforeDelta = state[0].recordVersion ?? 0;
   state = openThreadReducer(state, {
     type: "merge-stream",
     threadId: "thread-1",
@@ -370,6 +372,8 @@ test("open thread reducer replaces stale snapshots and applies command output de
   });
 
   assert.deepEqual(state[0].records.map((item) => item.id), [commandRecord.id]);
+  assert.equal(state[0].records, recordsBeforeDelta);
+  assert.equal(state[0].recordVersion, versionBeforeDelta + 1);
   assert.equal(
     (state[0].records[0].payload as { aggregated_output?: string }).aggregated_output,
     "first second"

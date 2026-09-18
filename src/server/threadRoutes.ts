@@ -99,14 +99,62 @@ export const registerThreadRoutes = <
     let projectSubscriber: ((event: ProjectEvent) => void) | null = null;
     let taskSubscriber: ((event: TaskEvent) => void) | null = null;
     let connectionSubscriber: ((event: ConnectionEvent) => void) | null = null;
+    const pendingThreadDeltas = new Map<string, {
+      type: "record_delta";
+      kind: "record_delta";
+      seq: number;
+      thread: { threadId: string };
+      delta: { recordId: string; field: string; append: string };
+    }>();
+    let pendingThreadDeltaTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const send = (message: unknown) => {
+    const sendImmediate = (message: unknown) => {
       if (socket.readyState !== 1) return;
       socket.send(JSON.stringify(message));
     };
 
+    const flushThreadDeltas = () => {
+      if (pendingThreadDeltaTimer !== null) {
+        clearTimeout(pendingThreadDeltaTimer);
+        pendingThreadDeltaTimer = null;
+      }
+      const deltas = [...pendingThreadDeltas.values()];
+      pendingThreadDeltas.clear();
+      for (const delta of deltas) sendImmediate(delta);
+    };
+
+    const send = (message: unknown) => {
+      flushThreadDeltas();
+      sendImmediate(message);
+    };
+
     const sendEvent = <T extends { kind: string }>(event: T) => {
-      send({ type: event.kind, ...event });
+      if (event.kind === "record_delta" && "delta" in event) {
+        const deltaEvent = event as T & {
+          seq: number;
+          thread: { threadId: string };
+          delta: { recordId: string; field: string; append: string };
+        };
+        const key = `${deltaEvent.thread.threadId}\u0000${deltaEvent.delta.recordId}\u0000${deltaEvent.delta.field}`;
+        const previous = pendingThreadDeltas.get(key);
+        if (previous) pendingThreadDeltas.delete(key);
+        pendingThreadDeltas.set(key, {
+          type: "record_delta",
+          kind: "record_delta",
+          seq: deltaEvent.seq,
+          thread: deltaEvent.thread,
+          delta: {
+            ...deltaEvent.delta,
+            append: `${previous?.delta.append ?? ""}${deltaEvent.delta.append}`
+          }
+        });
+        if (pendingThreadDeltaTimer === null) {
+          pendingThreadDeltaTimer = setTimeout(() => flushThreadDeltas(), 16);
+        }
+        return;
+      }
+      flushThreadDeltas();
+      sendImmediate({ type: event.kind, ...event });
     };
 
     const unsubscribeControl = () => {
@@ -188,6 +236,11 @@ export const registerThreadRoutes = <
     };
 
     const closeSubscriptions = () => {
+      if (pendingThreadDeltaTimer !== null) {
+        clearTimeout(pendingThreadDeltaTimer);
+        pendingThreadDeltaTimer = null;
+      }
+      pendingThreadDeltas.clear();
       unsubscribeControl();
       openThreadPresence.remove(socket);
       for (const unsubscribe of threadUnsubscribers.values()) unsubscribe();

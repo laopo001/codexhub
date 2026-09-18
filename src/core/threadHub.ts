@@ -125,6 +125,7 @@ type ThreadRecordIndex = {
   byId: Map<string, number>;
   transcriptByKey: Map<string, number>;
   messageCount: number;
+  codexViewCount: number;
 };
 
 type ThreadHistorySnapshotState = {
@@ -3578,11 +3579,13 @@ export class ThreadHub {
       const key = this.appServerTranscriptRecordKey(thread, record);
       if (key && !transcriptByKey.has(key)) transcriptByKey.set(key, index);
     }
+    const views = recordsToViews(thread.records);
     const next: ThreadRecordIndex = {
       records: thread.records,
       byId,
       transcriptByKey,
-      messageCount: recordsToViews(thread.records).length
+      messageCount: views.length,
+      codexViewCount: views.filter((view) => view.role === "codex").length
     };
     this.recordIndexes.set(thread, next);
     return next;
@@ -3620,6 +3623,20 @@ export class ThreadHub {
   ) {
     const key = this.appServerTranscriptRecordKey(thread, incoming);
     return key ? index.transcriptByKey.get(key) ?? -1 : -1;
+  }
+
+  private tokenUsageViewCount(
+    thread: ThreadState,
+    index: ThreadRecordIndex,
+    record: CodexRecord,
+    targetIndex: number
+  ) {
+    if (!recordToView(record)) return 0;
+    if (targetIndex === -1) return index.codexViewCount > 0 ? 0 : 1;
+    for (let position = 0; position < targetIndex; position += 1) {
+      if (recordToView(thread.records[position])?.role === "codex") return 0;
+    }
+    return 1;
   }
 
   private upsertRecord(
@@ -3690,12 +3707,23 @@ export class ThreadHub {
       thread.records = orderThreadRecords(thread.records);
       this.invalidateThreadRecordIndex(thread);
     } else {
-      const existingViewCount = existing && recordToView(existing) ? 1 : 0;
-      const recordViewCount = recordToView(record) ? 1 : 0;
+      const existingView = existing ? recordToView(existing) : null;
+      const recordView = recordToView(record);
+      const existingIsTokenUsage = isTokenUsageRecord(existing);
+      const recordIsTokenUsage = isTokenUsageRecord(record);
+      const existingViewCount = existingIsTokenUsage
+        ? recordIsTokenUsage
+          ? 0
+          : this.tokenUsageViewCount(thread, recordIndex, existing!, targetIndex)
+        : existingView ? 1 : 0;
+      const recordViewCount = recordIsTokenUsage
+        ? existingIsTokenUsage
+          ? 0
+          : this.tokenUsageViewCount(thread, recordIndex, record, targetIndex)
+        : recordView ? 1 : 0;
       recordIndex.messageCount += recordViewCount - existingViewCount;
-      if (isTokenUsageRecord(existing) || isTokenUsageRecord(record)) {
-        recordIndex.messageCount = recordsToViews(thread.records).length;
-      }
+      recordIndex.codexViewCount += (recordView?.role === "codex" ? 1 : 0)
+        - (existingView?.role === "codex" ? 1 : 0);
     }
     thread.updatedAt = newerTimestamp(thread.updatedAt, record.timestamp) ?? new Date().toISOString();
     if (isTokenUsageRecord(existing) || isTokenUsageRecord(record)) {
