@@ -19,7 +19,11 @@ import { fileChangePreviewFiles } from "./fileChanges.js";
 import { compactLine, isFastServiceTier, rawModelLabel, reasoningDisplayLabel, serviceTierDisplayLabel, turnIdFromAppRecordId } from "./core.js";
 import { formatDate, shortId, stringifyInspectJson } from "./common.js";
 import { turnDurationMsForTurn } from "./turnDurations.js";
-import { bumpRecordVersion, recordVersionFor } from "./recordVersion.js";
+import {
+  bumpRecordVersion,
+  markRecordSourceTransition,
+  recordVersionFor
+} from "./recordVersion.js";
 
 export const latestThreadUsageFromRecords = (records: CodexRecord[]): ThreadUsage | null => {
   const usage = threadUsageFromRecords(records);
@@ -331,7 +335,10 @@ export const mergeRecord = (records: CodexRecord[], incoming: CodexRecord) => {
     if (
       (!previous || compareCodexRecords(previous, incoming) <= 0)
       && (!following || compareCodexRecords(incoming, following) <= 0)
-    ) return next;
+    ) {
+      markRecordSourceTransition(next, { kind: "replace", previous: records, index: existingIndex });
+      return next;
+    }
     next.splice(existingIndex, 1);
     return insertOrderedRecord(next, incoming);
   }
@@ -377,7 +384,13 @@ const insertOrderedRecord = (records: CodexRecord[], incoming: CodexRecord) => {
     if (compareCodexRecords(records[middle], incoming) <= 0) low = middle + 1;
     else high = middle;
   }
-  return [...records.slice(0, low), incoming, ...records.slice(low)];
+  const next = [...records.slice(0, low), incoming, ...records.slice(low)];
+  markRecordSourceTransition(next, {
+    kind: low === 0 ? "prepend" : low === records.length ? "append" : "insert",
+    previous: records,
+    index: low
+  });
+  return next;
 };
 
 export const combineRecordSources = (left: CodexRecord[], right: CodexRecord[]) => {
@@ -444,8 +457,30 @@ const tryMergeOrderedRecordSources = (left: CodexRecord[], right: CodexRecord[])
     }
   }
   merged.push(...left.slice(leftIndex), ...right.slice(rightIndex));
+  if (hasRecordSequence(merged, left, 0)) {
+    markRecordSourceTransition(merged, {
+      kind: "append",
+      previous: left,
+      alternatePrevious: right,
+      index: left.length
+    });
+  } else if (hasRecordSequence(merged, right, merged.length - right.length)) {
+    markRecordSourceTransition(merged, {
+      kind: "prepend",
+      previous: right,
+      alternatePrevious: left,
+      index: 0
+    });
+  } else {
+    markRecordSourceTransition(merged, { kind: "unknown", previous: left });
+  }
   return merged;
 };
+
+const hasRecordSequence = (records: CodexRecord[], sequence: CodexRecord[], start: number) =>
+  start >= 0
+  && start + sequence.length <= records.length
+  && sequence.every((record, index) => records[start + index] === record);
 
 const orderedRecordSourceIdentity = (records: CodexRecord[]) => {
   const index = webRecordIndexFor(records);
@@ -478,6 +513,7 @@ export const applyThreadRecordDelta = (
     }
   };
   webRecordIndexFor(next).currentRecordId = delta.recordId;
+  markRecordSourceTransition(next, { kind: "live-delta", previous: records, index });
   return next;
 };
 
@@ -503,7 +539,7 @@ export const applyThreadRecordDeltaInPlace = (
     }
   };
   recordIndex.currentRecordId = delta.recordId;
-  bumpRecordVersion(records);
+  bumpRecordVersion(records, { kind: "live-delta", index, recordId: delta.recordId });
   return true;
 };
 

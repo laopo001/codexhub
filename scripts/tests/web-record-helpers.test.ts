@@ -3,10 +3,15 @@ import test from "node:test";
 import type { CodexRecord } from "../../src/shared/recordTypes.js";
 import {
   applyThreadRecordDelta,
+  applyThreadRecordDeltaInPlace,
   combineRecordSources,
   mergeRecord
 } from "../../src/web/helpers/records.js";
-import { conversationViewsFromRecords } from "../../src/web/helpers/conversationViews.js";
+import {
+  conversationProjectionStatsForTest,
+  conversationViewsFromRecords,
+  resetConversationProjectionStatsForTest
+} from "../../src/web/helpers/conversationViews.js";
 
 const messageRecord = (
   id: string,
@@ -20,6 +25,17 @@ const messageRecord = (
   ...options,
   payload: { type: "agent_message", phase: "final_answer", message }
 });
+
+const projectionShape = (views: ReturnType<typeof conversationViewsFromRecords>) => views.map((view) => ({
+  id: view.id,
+  role: view.role,
+  label: view.label,
+  text: view.text,
+  status: view.status,
+  toolBatch: view.toolBatch
+    ? { ...view.toolBatch, labels: [...view.toolBatch.labels] }
+    : undefined
+}));
 
 test("record source merge preserves canonical order and app-server semantic dedupe", () => {
   const live = messageRecord(
@@ -104,4 +120,87 @@ test("conversation projection cache keeps expansion keys independent", () => {
   assert.equal(expanded.some((view) => view.record.id === "tool-1"), true);
   assert.equal(expanded.find((view) => view.toolBatch)?.toolBatch?.expanded, true);
   assert.equal(conversationViewsFromRecords(records).find((view) => view.toolBatch)?.toolBatch?.expanded, false);
+});
+
+test("long live shell deltas reuse the stable conversation prefix", () => {
+  const shell: CodexRecord = {
+    id: "live-shell",
+    type: "response_item",
+    timestamp: "2026-09-18T00:10:00.000Z",
+    payload: {
+      type: "local_shell_call",
+      call_id: "live-shell",
+      status: "in_progress",
+      aggregated_output: "first"
+    }
+  };
+  const records = [
+    ...Array.from({ length: 512 }, (_, index) => messageRecord(
+      `history-${index}`,
+      `history message ${index}`,
+      `2026-09-18T00:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`
+    )),
+    shell
+  ];
+
+  const initial = conversationViewsFromRecords(records);
+  resetConversationProjectionStatsForTest();
+  assert.equal(applyThreadRecordDeltaInPlace(records, {
+    recordId: shell.id,
+    field: "aggregated_output",
+    append: " second"
+  }), true);
+  const updated = conversationViewsFromRecords(records);
+  const stats = conversationProjectionStatsForTest();
+
+  assert.equal(stats.incrementalLiveDeltas, 1);
+  assert.equal(stats.fullRebuilds, 0);
+  assert.equal(updated[0], initial[0]);
+  assert.equal(updated[256], initial[256]);
+  assert.notEqual(updated.at(-1), initial.at(-1));
+  assert.match(updated.at(-1)?.text ?? "", /second/);
+  assert.deepEqual(projectionShape(updated), projectionShape(conversationViewsFromRecords(records.slice())));
+});
+
+test("safe tail append reuses the cached prefix while unsafe source changes rebuild", () => {
+  const current = [messageRecord("current", "current", "2026-09-18T00:00:02.000Z")];
+  const initial = conversationViewsFromRecords(current);
+
+  resetConversationProjectionStatsForTest();
+  const appended = mergeRecord(current, messageRecord("appended", "appended", "2026-09-18T00:00:03.000Z"));
+  const appendedViews = conversationViewsFromRecords(appended);
+  assert.equal(conversationProjectionStatsForTest().incrementalAppends, 1);
+  assert.equal(conversationProjectionStatsForTest().fullRebuilds, 0);
+  assert.equal(appendedViews[0], initial[0]);
+  assert.equal(appendedViews.at(-1)?.text, "appended");
+  assert.deepEqual(projectionShape(appendedViews), projectionShape(conversationViewsFromRecords(appended.slice())));
+
+  const transient = [
+    { id: "thinking", type: "response_item", timestamp: "2026-09-18T00:00:01.000Z", payload: { type: "reasoning", summary: ["thinking"] } },
+    { id: "sleep", type: "response_item", timestamp: "2026-09-18T00:00:02.000Z", payload: { type: "sleep", status: "completed", durationMs: 1000 } }
+  ] satisfies CodexRecord[];
+  const transientInitial = conversationViewsFromRecords(transient);
+  const transientAppended = mergeRecord(transient, messageRecord("answer", "answer", "2026-09-18T00:00:03.000Z"));
+  const transientViews = conversationViewsFromRecords(transientAppended);
+  assert.deepEqual(transientViews.map((view) => view.id), ["answer"]);
+  assert.deepEqual(projectionShape(transientViews), projectionShape(conversationViewsFromRecords(transientAppended.slice())));
+  assert.equal(transientInitial.length, 2);
+
+  resetConversationProjectionStatsForTest();
+  const older = messageRecord("older", "older", "2026-09-18T00:00:01.000Z");
+  const prepended = combineRecordSources([older], appended);
+  const prependedViews = conversationViewsFromRecords(prepended);
+  assert.equal(prependedViews[0]?.text, "older");
+  assert.equal(conversationProjectionStatsForTest().fullInvalidations, 1);
+  assert.equal(conversationProjectionStatsForTest().fullRebuilds, 1);
+
+  resetConversationProjectionStatsForTest();
+  const nonTailRevision = applyThreadRecordDelta(appended, {
+    recordId: "current",
+    field: "aggregated_output",
+    append: " ignored-by-message-fixture"
+  });
+  conversationViewsFromRecords(nonTailRevision);
+  assert.equal(conversationProjectionStatsForTest().fullInvalidations, 1);
+  assert.equal(conversationProjectionStatsForTest().fullRebuilds, 1);
 });
