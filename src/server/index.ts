@@ -363,6 +363,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   const contextWindowTokens = Number(process.env.CODEX_CONTEXT_WINDOW_TOKENS || 0) || null;
   const staticDirectory = staticRoot(options.staticDirectory);
   let telegramBot: TelegramBotHandle | null = null;
+  let startupClosing = false;
   let localMachine: CodexhubMachineHandle | null = null;
   let parentRegistration: ParentBackendRegistrationHandle | null = null;
   let parentRegistrationOperation = 0;
@@ -491,6 +492,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
       webClients?.stop();
     },
     stopIntegrations: () => {
+      startupClosing = true;
       telegramBot?.stop("server closing");
       telegramBot = null;
       plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
@@ -844,6 +846,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     if (!sshAutoConnectEnabled()) return;
     const hosts = await listCodexhubSshHosts();
     for (const host of hosts) {
+      if (startupClosing) return;
       await autoConnectSavedSshHost(host.alias, reason);
     }
   }
@@ -851,6 +854,7 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   async function autoConnectSavedSshHost(alias: string, reason: string) {
     if (!features.ssh) return;
     if (!sshAutoConnectEnabled()) return;
+    if (startupClosing) return;
     if (sshMachines.listConnections().some((connection) => connection.host === alias && connection.status !== "exited")) return;
     const configHostsByAlias = await localSshConfigHostsByAlias();
     if (!configHostsByAlias.has(alias)) {
@@ -882,17 +886,24 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
 
 
   async function startBuiltinIntegrations() {
+    if (startupClosing) return;
     if (!features.integrations) {
       plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
       return;
     }
     plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
-    if (await plugins.hasEnabledBuiltinIntegration(telegramIntegrationType)) {
+    if (await plugins.hasEnabledBuiltinIntegration(telegramIntegrationType) && !startupClosing) {
       telegramBot = await startTelegramPlugin({
         apiBaseUrl: localApiBaseUrl(config.host, config.port),
         apiAuthToken: serverAuthToken,
         requireToken: false
       });
+      if (startupClosing) {
+        telegramBot?.stop("server closing");
+        telegramBot = null;
+        plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
+        return;
+      }
       plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(Boolean(telegramBot)));
     }
   }
@@ -1097,14 +1108,13 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }
   }
 
-  if (features.ssh) await autoConnectSavedSshHosts("startup");
-
-  try {
-    await startBuiltinIntegrations();
-  } catch (error) {
-    await app.close();
-    throw error;
-  }
+  void autoConnectSavedSshHosts("startup").catch((error: unknown) => {
+    app.log.warn({ err: error }, "codexhub SSH startup autoconnect failed");
+  });
+  void startBuiltinIntegrations().catch((error: unknown) => {
+    plugins.setIntegrationState(telegramIntegrationType, telegramPluginState(false));
+    app.log.warn({ err: error }, "codexhub builtin integration startup failed");
+  });
 
   return {
     app,
