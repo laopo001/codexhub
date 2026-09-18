@@ -101,19 +101,29 @@ export const normalizeRuntimes = (runtimes: RuntimeSummary[] | undefined): Runti
       }))
     : [];
 
-const normalizeMachine = (machine: MachineSummary | StoredMachine): MachineSummary =>
-  "online" in machine
+const normalizeMachine = (machine: MachineSummary | StoredMachine): MachineSummary => {
+  const normalized = "online" in machine
     ? machine
     : {
       ...machine,
       online: false,
-      status: "offline"
+      status: "offline" as const
     };
+  if (!normalized.runtime) return normalized;
+  return {
+    ...normalized,
+    runtime: normalizeRuntimes([normalized.runtime])[0] ?? null
+  };
+};
 
 export const normalizeMachines = (machines: Array<MachineSummary | StoredMachine> | undefined): MachineSummary[] =>
   Array.isArray(machines)
     ? machines.map(normalizeMachine)
     : [];
+
+/** Extract the nested one-runtime-per-machine projection from /api/machines. */
+export const runtimesFromMachines = (machines: MachineSummary[]) =>
+  normalizeRuntimes(machines.flatMap((machine) => machine.runtime ? [machine.runtime] : []));
 
 export const normalizeProjects = (projects: ProjectSummary[] | undefined) =>
   Array.isArray(projects)

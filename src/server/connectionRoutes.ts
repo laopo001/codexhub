@@ -26,11 +26,13 @@ import {
   type SshHostsPayload,
   type SshHostSummary
 } from "../shared/apiContract.js";
+import type { MachineSummary } from "../shared/machineTypes.js";
 import { contentType } from "./serverFiles.js";
 
 export type ConnectionRoutesContext = {
   sshEnabled: boolean;
   machines: MachineHub;
+  listMachineSnapshots: () => MachineSummary[];
   plugins: PluginHub;
   sshMachines: SshMachineManager;
   state: CodexhubServerState;
@@ -45,7 +47,7 @@ export type ConnectionRoutesContext = {
 };
 
 export const registerConnectionRoutes = (app: FastifyInstance, ctx: ConnectionRoutesContext) => {
-  app.get("/api/machines", async () => ({ machines: ctx.machines.listMachines() } satisfies MachinesPayload));
+  app.get("/api/machines", async () => ({ machines: ctx.listMachineSnapshots() } satisfies MachinesPayload));
 
   app.get("/api/ssh/config-hosts", async () => ({
     hosts: ctx.sshEnabled ? await listSshHosts() : []

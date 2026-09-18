@@ -21,6 +21,7 @@ type MachineSummary = {
   capabilities?: {
     projectLauncher?: boolean;
   };
+  runtime?: RuntimeState | null;
 };
 
 type ProjectThreadStartResponse = {
@@ -690,8 +691,8 @@ const waitForChildServer = async (apiBase: string, child: ChildProcess & { outpu
 const waitForRuntimeOnline = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 90_000) {
-    const data = await apiJson<{ runtimes?: RuntimeState[] }>(apiBase, "/api/runtimes?includeOffline=true").catch(() => ({ runtimes: [] }));
-    const runtime = data.runtimes?.find((item) => item.machineId === machineId);
+    const data = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines").catch(() => ({ machines: [] }));
+    const runtime = data.machines?.find((item) => item.machineId === machineId)?.runtime;
     if (runtime?.online) return runtime;
     await delay(250);
   }
@@ -737,8 +738,8 @@ const waitForRegisteredMachineRemoved = async (apiBase: string, machineId: strin
 const waitForRuntimeStopped = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 15_000) {
-    const data = await apiJson<{ runtimes?: RuntimeState[] }>(apiBase, "/api/runtimes?includeOffline=true").catch(() => ({ runtimes: [] }));
-    const runtime = data.runtimes?.find((item) => item.machineId === machineId);
+    const data = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines").catch(() => ({ machines: [] }));
+    const runtime = data.machines?.find((item) => item.machineId === machineId)?.runtime;
     if (!runtime || (!runtime.online && runtime.offlineReason === "unregistered")) return runtime;
     await delay(250);
   }

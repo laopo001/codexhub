@@ -13,8 +13,8 @@ import {
   mergeThreadOrderByMachine,
   normalizeMachines,
   normalizeProjects,
-  normalizeRuntimes,
   preferredThreadIdForRuntime,
+  runtimesFromMachines,
   fixedProject,
   machineProjectCatalogEditable,
   machineProjectLauncher,
@@ -531,8 +531,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
         ctx.setSelectedProjectKey(projectKeyFor(parentProject.machineId, cwd));
         deps.focusTaskDraftProject({ machineId: parentProject.machineId, path: cwd });
       }
-      const freshRuntimes = await apiRouteJson(apiRoutes.runtimes)
-        .then((data) => normalizeRuntimes(data.runtimes))
+      const freshRuntimes = await apiRouteJson(apiRoutes.machines)
+        .then((data) => runtimesFromMachines(normalizeMachines(data.machines)))
         .catch(() => ctx.runtimeList);
       ctx.setRuntimeList(freshRuntimes);
       ctx.setThreadOrderByMachine((current) => mergeThreadOrderByMachine(current, freshRuntimes));
@@ -620,8 +620,8 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
       ctx.setProjects(freshProjects);
       ctx.setProjectActionError("");
       ctx.setActiveWorkspacePath(payload.result?.cwd ?? trimmedPath);
-      const freshRuntimes = await apiRouteJson(apiRoutes.runtimes)
-        .then((data) => normalizeRuntimes(data.runtimes))
+      const freshRuntimes = await apiRouteJson(apiRoutes.machines)
+        .then((data) => runtimesFromMachines(normalizeMachines(data.machines)))
         .catch(() => ctx.runtimeList);
       ctx.setRuntimeList(freshRuntimes);
       ctx.setThreadOrderByMachine((current) => mergeThreadOrderByMachine(current, freshRuntimes));

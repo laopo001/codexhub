@@ -11,7 +11,7 @@ import {
   executionChanged,
   turnCompleted,
   turnSnapshot
-} from "./test-support/appServerEvents.js";
+} from "../tests/support/appServerEvents.js";
 
 type MachineSummary = {
   machineId: string;
@@ -1372,8 +1372,8 @@ const assertRuntimeAccountRateLimits = async (
 ) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 5000) {
-    const data = await apiJson<{ runtimes?: PartialRuntimeSummary[] }>(apiBase, "/api/runtimes");
-    const accountRateLimits = data.runtimes?.find((runtime) => runtime.machineId === machineId)?.accountRateLimits;
+    const data = await apiJson<{ machines?: Array<{ machineId?: string; runtime?: PartialRuntimeSummary | null }> }>(apiBase, "/api/machines");
+    const accountRateLimits = data.machines?.find((machine) => machine.machineId === machineId)?.runtime?.accountRateLimits;
     const primary = accountRateLimits?.primaryRateLimit;
     const secondary = accountRateLimits?.secondaryRateLimit;
     if (

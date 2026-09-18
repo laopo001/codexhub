@@ -222,7 +222,7 @@ codexhub send <threadId> "继续检查" --cwd /srv/project
 
 CodexHub CLI 通过同一后端创建或续接 thread；显式指定的后端不可用时明确失败。打开同一后端的 Web，选择对应 machine 和项目目录，在 thread picker 中按名称或 threadId 打开该会话，即可查看指令、回复和工具执行记录。CLI 不会自动改变浏览器已有的 tabs。发送必须使用原后端和准确 threadId；需要的权限应在目标后端配置。
 
-server 在线时，每台 machine 最多维护一个官方 app-server runtime；内部进程代次使用 `sessionId` 传输，但公共 API、Web state、task history 和 thread 投影都以稳定 `machineId` 表达。该 runtime 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。`/api/runtimes` 按 machine 投影当前状态，不暴露内部 session ID 或 app-server URL。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/runtimes/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 runtime 投影，Web 合并两者展示。Thread Model 和 Composer Permissions 分别通过 `/api/machines/:machineId/models`、`/api/machines/:machineId/permission-profiles` 读取当前在线 runtime 的 catalog，不写入 `config.yaml`，也不维护静态 fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
+server 在线时，每台 machine 最多维护一个官方 app-server runtime；内部进程代次使用 `sessionId` 传输，但公共 API、Web state、task history 和 thread 投影都以稳定 `machineId` 表达。该 runtime 会同步官方 app-server 的 thread/turn/item/rawResponseItem/tokenUsage 事件，并接收 Web、Telegram、task 或 API 对具体 `threadId` 的远程 turn。`/api/machines` 一次返回 machine 及其唯一 `runtime` 投影，不暴露内部 session ID 或 app-server URL；旧 `/api/runtimes` 仅用于一代兼容。Telegram 绑定到具体 thread。Web 页面只持有一条 `/api/events/ws` 实时连接，在其中多路复用 projects/runtimes/tasks/connections 和页面 thread tabs 的事件订阅。Thread context usage 由 server 从 `thread/tokenUsage/updated` 计算；账号 rate limits 独立从 `account/rateLimits/read` 和 `account/rateLimits/updated` 同步到 runtime 投影，Web 合并两者展示。Thread Model 和 Composer Permissions 分别通过 `/api/machines/:machineId/models`、`/api/machines/:machineId/permission-profiles` 读取当前在线 runtime 的 catalog，不写入 `config.yaml`，也不维护静态 fallback。Web Context 旁的 Compact 按钮和 `/api/threads/:threadId/compact` 会调用官方 app-server `thread/compact/start`，compact 进度继续由 app-server record 流显示。Composer menu 里的 Review changes 和 `/api/threads/:threadId/review` 会调用官方 app-server `review/start`，默认 review 当前 workspace 未提交改动并 inline 跑在当前 thread。
 
 
 ### Codex Apps 与插件同步
@@ -250,7 +250,7 @@ CodexHub 只保留三种 machine 连接方式：
 
 不再支持 CodexHub server-to-server state bridge；也不再提供 `type=server` machine、Connections / Servers tab、`/api/server-connections` 或 normalized thread mirror。`codexhub server --register-to` 只把当前 server 作为一台 `registered` machine 接入父 server，父 server 仍只通过 machine/app-server 协议操作它。
 
-当前在线 machine runtime 状态以 Web 和 `/api/runtimes` 为准；project 只是 `machineId + path` 元数据。历史 thread 选择以 Web 的 thread picker 和 `/api/machines/:machineId/threads` 为准。
+当前在线 machine runtime 状态以 `/api/machines` 的嵌套 `runtime` 和 Web 的 machine 聚合状态为准；project 只是 `machineId + path` 元数据。历史 thread 选择以 Web 的 thread picker 和 `/api/machines/:machineId/threads` 为准。
 
 project bootstrap 或 thread 创建接口会返回 `machineId` 和 `threadId`；Web、Telegram、task 或 API 都应显式用这个 `threadId` 继续投递消息。
 
@@ -388,7 +388,7 @@ pnpm build
 
 `smoke:auth` 覆盖普通 API 仅接受 Bearer token、WebSocket 和文件预览仅在指定路径接受 `?codexhub_token=`，以及 registered bootstrap 传递 Bearer token。
 
-`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 machine runtime ensure 不写 project、project path thread bootstrap、跨 project 共享唯一 machine runtime、`/api/projects` 不暴露 runtime/thread 列表、`/api/runtimes` 不暴露内部 session ID、runtime account rate limits、thread detail 不暴露 `workerId` 或 current thread，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认 machine/session registration 会拒绝未知旧字段。`smoke:task-lock` 额外覆盖 machine-scoped model、permission profile 和 command palette 通道，以及 runtime-authoritative catalog 响应。
+`smoke:machine-session` 会启动一个临时 server、内嵌 `local` machine 和官方 Codex app-server，验证 machine runtime ensure 不写 project、project path thread bootstrap、跨 project 共享唯一 machine runtime、`/api/projects` 不暴露 runtime/thread 列表、`/api/machines` 的 machine-runtime 聚合投影不暴露内部 session ID、runtime account rate limits、thread detail 不暴露 `workerId` 或 current thread，验证 SSH config `Include`、SSH reverse tunnel 命令构造、插件 CSS 资产、`/status` 对话流、pending shell command 展示、server-local task 创建/运行/校验，并确认 machine/session registration 会拒绝未知旧字段。`smoke:task-lock` 额外覆盖 machine-scoped model、permission profile 和 command palette 通道，以及 runtime-authoritative catalog 响应。
 
 `smoke:registered-machine` 会分别启动真实 `codexhub machine --type registered` 和 `codexhub server --register-to` CLI 子进程，并覆盖动态 `/api/registered/parent` 注册、Register URL `?codexhub_token=` 提取、空 token、子 server parent registration 的 `config.yaml` 持久化与 `0600` 权限、父 server 不持久化 registered machine、server 重启自动恢复、Disconnect 清除自动连接、共享父配置下的 authority 级稳定 machine identity、自注册拒绝、同机不同端口注册、machine transport 建立后的 app-server 协议握手与 CLI 版本投影、project path thread bootstrap、`/status` 对话流，以及正常 SIGTERM 后 machine/session unregister 生命周期和 app-server 进程清理。单元测试还覆盖 embedded authority 端口映射、VSCode/Electron surface lease 与 project 聚合、runtime-only 握手不创建默认 thread、token 错误脱敏和连接握手期间的强制中止。
 

@@ -23,7 +23,7 @@ import {
   executionChanged,
   turnCompleted,
   turnSnapshot
-} from "./test-support/appServerEvents.js";
+} from "../tests/support/appServerEvents.js";
 
 type MachineSummary = {
   machineId: string;
@@ -49,10 +49,15 @@ type ProjectsPayload = {
   projects?: unknown[];
 };
 
-type RuntimesPayload = {
-  runtimes?: Array<{
+type MachineRuntimePayload = {
+  machines?: Array<{
     machineId?: string;
-    online?: boolean;
+    runtime?: {
+      machineId?: string;
+      online?: boolean;
+      offlineReason?: string;
+      accountRateLimits?: unknown;
+    } | null;
   }>;
 };
 
@@ -449,10 +454,10 @@ const main = async () => {
     });
     console.log("web realtime ok");
 
-    const runtimes = await apiJson(apiBase, "/api/runtimes");
-    assertNoWorkerId(runtimes, "/api/runtimes");
-    assertNoCurrentThread(runtimes, "/api/runtimes");
-    assertNoSessionId(runtimes, "/api/runtimes");
+    const machines = await apiJson(apiBase, "/api/machines");
+    assertNoWorkerId(machines, "/api/machines");
+    assertNoCurrentThread(machines, "/api/machines");
+    assertNoSessionId(machines, "/api/machines");
     const thread = await apiJson<ThreadDetail>(apiBase, `/api/threads/${encodeURIComponent(threadId)}`);
     assertNoWorkerId(thread, "/api/threads/:threadId");
     assertNoSessionId(thread, "/api/threads/:threadId");
@@ -3376,10 +3381,10 @@ const assertProjectRuntimeView = async (apiBase: string, projectId: string, mach
   if ("online" in project || "session" in project || "sessions" in project || "threads" in project) {
     throw new Error(`/api/projects exposed runtime fields for ${projectId}: ${JSON.stringify(project)}`);
   }
-  const runtimesPayload = await apiJson<RuntimesPayload>(apiBase, "/api/runtimes");
-  const runtime = (runtimesPayload.runtimes ?? []).find((item) => item.machineId === machineId);
+  const machinesPayload = await apiJson<MachineRuntimePayload>(apiBase, "/api/machines");
+  const runtime = machinesPayload.machines?.find((machine) => machine.machineId === machineId)?.runtime;
   if (!runtime?.online) {
-    throw new Error(`/api/runtimes did not expose online runtime ${machineId}: ${JSON.stringify(runtimesPayload.runtimes)}`);
+    throw new Error(`/api/machines did not expose online runtime ${machineId}: ${JSON.stringify(machinesPayload.machines)}`);
   }
 };
 
@@ -3409,13 +3414,13 @@ const assertProjectDeleteKeepsSharedRuntime = async (apiBase: string, projectId:
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < 2000) {
-    const payload = await apiJson<{ runtimes?: unknown[] }>(apiBase, "/api/runtimes?includeOffline=true");
-    const runtime = (payload.runtimes ?? []).map(asRecord).find((item) => item.machineId === machineId);
+    const payload = await apiJson<MachineRuntimePayload>(apiBase, "/api/machines");
+    const runtime = payload.machines?.find((machine) => machine.machineId === machineId)?.runtime;
     if (runtime?.online === true) return;
     await delay(100);
   }
-  const payload = await apiJson<{ runtimes?: unknown[] }>(apiBase, "/api/runtimes?includeOffline=true");
-  throw new Error(`machine runtime went offline after deleting project metadata: ${JSON.stringify(payload.runtimes)}`);
+  const payload = await apiJson<MachineRuntimePayload>(apiBase, "/api/machines");
+  throw new Error(`machine runtime went offline after deleting project metadata: ${JSON.stringify(payload.machines)}`);
 };
 
 const assertRuntimeStaysOnlineAfterWatcherIdle = async (apiBase: string, machineId: string) => {
@@ -3434,10 +3439,10 @@ const assertRuntimeStaysOnlineAfterWatcherIdle = async (apiBase: string, machine
 
     const startedAt = Date.now();
     while (Date.now() - startedAt < 6000) {
-      const payload = await apiJson<{ runtimes?: unknown[] }>(apiBase, "/api/runtimes?includeOffline=true");
-      const runtime = (payload.runtimes ?? []).map(asRecord).find((item) => item.machineId === machineId);
+      const payload = await apiJson<MachineRuntimePayload>(apiBase, "/api/machines");
+      const runtime = payload.machines?.find((machine) => machine.machineId === machineId)?.runtime;
       if (!runtime || runtime.online !== true) {
-        throw new Error(`runtime went offline after watcher idle: ${JSON.stringify(payload.runtimes)}`);
+        throw new Error(`runtime went offline after watcher idle: ${JSON.stringify(payload.machines)}`);
       }
       await delay(100);
     }

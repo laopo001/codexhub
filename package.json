@@ -56,7 +56,7 @@
     "package:electron:win": "pnpm build && tsx scripts/package-electron.ts --win",
     "package:electron:win:dir": "pnpm build && tsx scripts/package-electron.ts --win --dir",
     "smoke:core": "pnpm run smoke:auth && pnpm run smoke:machine-session && pnpm run smoke:task-lock && pnpm run smoke:registered-machine",
-    "test:unit": "tsx --test scripts/tests/*.test.ts",
+    "test:unit": "tsx --test tests/*.test.ts",
     "check:app-server-protocol": "tsx scripts/check-app-server-protocol.ts",
     "probe:app-server-transcript": "tsx scripts/probe-app-server-transcript.ts",
     "clean": "node -e \"const fs=require('node:fs'); for (const path of ['dist','dist-node']) fs.rmSync(path,{recursive:true,force:true});\"",

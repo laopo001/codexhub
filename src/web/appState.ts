@@ -1,8 +1,8 @@
 import type { OpenThreadPresence } from "../shared/apiContract.js";
-import { useReducer, useRef, useState } from "react";
+import { useMemo, useReducer, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
-import { createComposerDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
+import { createComposerDraftStore, initAuthTokenFromUrl, runtimesFromMachines } from "./appHelpers.js";
 import { useIntegrationState, useUiState } from "./appStateSlices.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
 import type {
@@ -149,8 +149,29 @@ export const useAppState = () => {
   const [activeTabThreadId, setActiveTabThreadId] = useState("");
   const activeTabThreadIdRef = useRef(activeTabThreadId);
   activeTabThreadIdRef.current = activeTabThreadId;
-  const [runtimeList, setRuntimeList] = useState<RuntimeSummary[]>([]);
-  const [machines, setMachines] = useState<MachineSummary[]>([]);
+  const [machines, setMachineState] = useState<MachineSummary[]>([]);
+  const setMachines: typeof setMachineState = (update) => {
+    setMachineState((current) => {
+      const next = typeof update === "function" ? update(current) : update;
+      return next.map((machine) => {
+        const previous = current.find((item) => item.machineId === machine.machineId);
+        return machine.runtime === undefined && previous?.runtime !== undefined
+          ? { ...machine, runtime: previous.runtime }
+          : machine;
+      });
+    });
+  };
+  const runtimeList = useMemo(() => runtimesFromMachines(machines), [machines]);
+  const setRuntimeList: Dispatch<SetStateAction<RuntimeSummary[]>> = (update) => {
+    setMachineState((current) => {
+      const currentRuntimes = runtimesFromMachines(current);
+      const nextRuntimes = typeof update === "function" ? update(currentRuntimes) : update;
+      return current.map((machine) => ({
+        ...machine,
+        runtime: nextRuntimes.find((runtime) => runtime.machineId === machine.machineId) ?? null
+      }));
+    });
+  };
   const machinesRef = useRef<MachineSummary[]>(machines);
   machinesRef.current = machines;
   const [projects, setProjects] = useState<ProjectSummary[]>([]);

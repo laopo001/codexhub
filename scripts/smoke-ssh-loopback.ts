@@ -15,6 +15,7 @@ type MachineSummary = {
   name?: string;
   online?: boolean;
   offlineReason?: string;
+  runtime?: RuntimeState | null;
 };
 
 type SshConnection = {
@@ -284,8 +285,8 @@ const waitForMachineOffline = async (apiBase: string, machineId: string) => {
 const waitForRuntimeOffline = async (apiBase: string, machineId: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 15_000) {
-    const data = await apiJson<{ runtimes?: RuntimeState[] }>(apiBase, "/api/runtimes?includeOffline=true").catch(() => ({ runtimes: [] }));
-    const runtime = data.runtimes?.find((item) => item.machineId === machineId);
+    const data = await apiJson<{ machines?: MachineSummary[] }>(apiBase, "/api/machines").catch(() => ({ machines: [] }));
+    const runtime = data.machines?.find((item) => item.machineId === machineId)?.runtime;
     if (runtime && !runtime.online && runtime.offlineReason === "transport_disconnected") return runtime;
     await delay(250);
   }
