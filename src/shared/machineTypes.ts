@@ -1,6 +1,6 @@
 import type { PlanProgressSummary } from "./planProgress.js";
 import type { VscodeChannel } from "./surfaceTypes.js";
-import type { RuntimeSummary, ThreadInputSource } from "./threadTypes.js";
+import type { ThreadInputSource } from "./threadTypes.js";
 
 /** 机器来源类型；表示执行路径解析和 Codex runtime 启动的机器边界。 */
 export type MachineType = "local" | "ssh" | "registered";
@@ -87,8 +87,6 @@ export type MachineSummary = {
   cwd?: string;
   capabilities: MachineCapabilities;
   activities?: MachineActivitySummary[];
-  /** 当前 machine 承载的唯一 runtime；只在 machine 专属投影中返回。 */
-  runtime?: RuntimeSummary | null;
 };
 
 /** machine 确保唯一 Codex runtime 已启动后的内部结果。 */

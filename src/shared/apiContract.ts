@@ -280,7 +280,7 @@ export type MachinesPayload = {
   machines?: MachineSummary[];
 };
 
-/** Deprecated one-release compatibility payload for `/api/runtimes`. */
+/** `/api/runtimes` 返回的 machine runtime 列表 payload。 */
 export type RuntimesPayload = {
   runtimes?: RuntimeSummary[];
   offline?: number;

@@ -161,7 +161,6 @@ export const apiRoutes = {
   config: get<ServerConfigPayload>("/api/config"),
   updateConfig: patch<ServerConfigUpdateInput, ServerConfigPayload>("/api/config"),
   machines: get<MachinesPayload>("/api/machines"),
-  /** @deprecated Use `machines` and read each machine's nested `runtime`. */
   runtimes: get<RuntimesPayload>("/api/runtimes"),
   projects: get<ProjectsPayload>("/api/projects"),
   tasks: get<TasksPayload>("/api/tasks"),

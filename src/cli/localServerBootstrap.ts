@@ -176,16 +176,9 @@ const waitForLocalRuntime = async (
       continue;
     }
     lastMachineState = `machine ${machine.machineId} has no online runtime`;
-    if (machine.runtime?.online) {
+    const runtimes = await requestJson<RuntimesPayload>(input.baseUrl, "/api/runtimes", authToken, deadline);
+    if ((runtimes.runtimes ?? []).some((runtime) => runtime.machineId === machine.machineId && runtime.online)) {
       return machine.machineId;
-    }
-    // Older authorities do not yet include the nested runtime field. Keep a
-    // one-release compatibility fallback; current authorities stay one GET.
-    if (!Object.hasOwn(machine, "runtime")) {
-      const legacy = await requestJson<RuntimesPayload>(input.baseUrl, "/api/runtimes", authToken, deadline).catch(() => null);
-      if (legacy?.runtimes?.some((runtime) => runtime.machineId === machine.machineId && runtime.online)) {
-        return machine.machineId;
-      }
     }
     if (!ensureAttempted) {
       ensureAttempted = true;

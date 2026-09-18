@@ -32,7 +32,6 @@ import {
   normalizePlugins,
   normalizeProjects,
   normalizeRuntimes,
-  runtimesFromMachines,
   normalizeTasks,
   patchProjectsThread,
   patchRuntimesThread,
@@ -173,7 +172,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
   const registeredMachineConnections = createRegisteredMachineConnectionTracker();
   const registeredMachineActivityStatuses = new Map<string, MachineActivityStatus>();
   const loadInitialPayloads = async () => Promise.all([
-    apiRouteJson(apiRoutes.machines),
+    apiRouteJson(apiRoutes.runtimes),
     apiRouteJson(apiRoutes.config),
     apiRouteJson(apiRoutes.projects),
     apiRouteJson(apiRoutes.sshHosts).catch(() => ({ hosts: [] })),
@@ -213,7 +212,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       throw error;
     }
     const [
-      machineData,
+      runtimeData,
       configData,
       projectData,
       sshHostData,
@@ -224,8 +223,8 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       taskData
     ] = initialPayloads;
     const defaultDirectory = health.defaultWorkingDirectory ?? "";
-    const loadedMachines = normalizeMachines(machineData.machines);
-    const loadedRuntimes = runtimesFromMachines(loadedMachines);
+    const loadedRuntimes = normalizeRuntimes(runtimeData.runtimes);
+    const loadedMachines = normalizeMachines(projectData.machines);
     const loadedProjects = normalizeProjects(projectData.projects);
     if (ctx.machinesRef) ctx.machinesRef.current = loadedMachines;
     registeredMachineConnections.seed(loadedMachines);
@@ -428,25 +427,13 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
       ctx.runtimesLastSeq.current = Math.max(ctx.runtimesLastSeq.current, payload.seq);
       const nextRuntimes = normalizeRuntimes(payload.runtimes);
       ctx.setRuntimeList(nextRuntimes);
-      const nextMachines = (ctx.machinesRef?.current ?? []).map((machine) => ({
-        ...machine,
-        runtime: nextRuntimes.find((runtime) => runtime.machineId === machine.machineId) ?? null
-      }));
-      if (ctx.machinesRef) ctx.machinesRef.current = nextMachines;
-      ctx.setMachines(nextMachines);
       ctx.setThreadOrderByMachine((current) => mergeThreadOrderByMachine(current, nextRuntimes));
       return;
     }
     if (message.type === "projects") {
       const payload = message;
       if (typeof payload.seq === "number") ctx.projectsLastSeq.current = Math.max(ctx.projectsLastSeq.current, payload.seq);
-      const currentMachines = ctx.machinesRef?.current ?? [];
-      const nextMachines = normalizeMachines(payload.machines).map((machine) => {
-        const current = currentMachines.find((item) => item.machineId === machine.machineId);
-        return machine.runtime === undefined && current?.runtime !== undefined
-          ? { ...machine, runtime: current.runtime }
-          : machine;
-      });
+      const nextMachines = normalizeMachines(payload.machines);
       if (ctx.machinesRef) ctx.machinesRef.current = nextMachines;
       const registeredMachineChanges = registeredMachineConnections.update(nextMachines);
       for (const machine of registeredMachineChanges.connected) {

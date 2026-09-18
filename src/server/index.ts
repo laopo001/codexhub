@@ -35,7 +35,7 @@ import {
   type ProjectsStreamEvent
 } from "../shared/apiContract.js";
 import { codexhubVersion } from "../shared/version.js";
-import type { MachineActivitySummary, MachineRegistrationProject, MachineSummary } from "../shared/machineTypes.js";
+import type { MachineActivitySummary, MachineRegistrationProject } from "../shared/machineTypes.js";
 import type { ProjectSource } from "../shared/projectTypes.js";
 import { readBooleanEnv, readNonNegativeNumberEnv } from "../shared/env.js";
 import {
@@ -521,18 +521,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
     }) satisfies ProjectsPayload;
   }
 
-  /** Machine-only projection: machine identity and its current one-to-one runtime. */
-  function machineSnapshots(): MachineSummary[] {
-    threads.markStaleSessionsOffline(sessionOfflineTimeoutMs(), Date.now(), sessionOfflineRetentionMs());
-    const runtimes = new Map(
-      threads.listRuntimes({ includeOffline: true }).map((runtime) => [runtime.machineId, runtime] as const)
-    );
-    return machines.listMachines().map((machine) => ({
-      ...machine,
-      runtime: runtimes.get(machine.machineId) ?? null
-    }));
-  }
-
   function projectSnapshotEvent(): ProjectsStreamEvent {
     return {
       seq: projectSeq,
@@ -1012,7 +1000,6 @@ export const startServer = async (options: ServerStartOptions = {}): Promise<Ser
   registerConnectionRoutes(app, {
     sshEnabled: features.ssh,
     machines,
-    listMachineSnapshots: machineSnapshots,
     plugins,
     sshMachines,
     state,

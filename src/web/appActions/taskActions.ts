@@ -8,8 +8,8 @@ import {
   mergeThreadOrderByMachine,
   normalizeMachines,
   normalizeProjects,
+  normalizeRuntimes,
   normalizeTasks,
-  runtimesFromMachines,
   primeTaskCompletionSound,
   primeTaskNotificationPermission,
   type SidebarDraftStore
@@ -58,8 +58,8 @@ export const createTaskActions = (ctx: TaskActionsContext, deps: TaskActionsDepe
     ctx.sidebarDraftStore.set("taskDraft", update);
   };
   const refreshRuntimes = async () => {
-    const freshRuntimes = await apiRouteJson(apiRoutes.machines)
-      .then((data) => runtimesFromMachines(normalizeMachines(data.machines)));
+    const freshRuntimes = await apiRouteJson(apiRoutes.runtimes)
+      .then((data) => normalizeRuntimes(data.runtimes));
     ctx.setRuntimeList(freshRuntimes);
     ctx.setThreadOrderByMachine((current) => mergeThreadOrderByMachine(current, freshRuntimes));
     return freshRuntimes;
