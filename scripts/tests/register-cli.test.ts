@@ -92,11 +92,9 @@ test("register posts to the local backend, separates tokens, and exits without c
   try {
     const parentUrl = parent.url;
     const result = await runCli([
-      "--server", local.url,
+      "--connect", local.url,
       "register",
-      "--to", parentUrl,
-      "--machine-id", "machine-cli",
-      "--name", "CLI registration"
+      "--to", parentUrl
     ], {
       CODEX_HUB_AUTH_TOKEN: "local-secret",
       CODEX_HUB_REGISTER_AUTH_TOKEN: "parent-env-secret"
@@ -109,9 +107,7 @@ test("register posts to the local backend, separates tokens, and exits without c
       authorization: "Bearer local-secret",
       body: {
         url: parentUrl,
-        authToken: "parent-env-secret",
-        machineId: "machine-cli",
-        name: "CLI registration"
+        authToken: "parent-env-secret"
       }
     });
     assert.equal(parentRequests, 0);
@@ -141,7 +137,7 @@ test("register preserves Register URL token semantics and explicit empty parent 
 
   try {
     const urlToken = `${local.url}/parent?codexhub_token=url-secret`;
-    const withoutExplicitToken = await runCli(["--server", local.url, "register", "--to", urlToken], {
+    const withoutExplicitToken = await runCli(["--connect", local.url, "register", "--to", urlToken], {
       CODEX_HUB_AUTH_TOKEN: "local-only-secret",
       CODEX_HUB_REGISTER_AUTH_TOKEN: "environment-secret"
     });
@@ -150,7 +146,7 @@ test("register preserves Register URL token semantics and explicit empty parent 
     assert.equal(requests[0]?.authorization, "Bearer local-only-secret");
 
     const withEmptyToken = await runCli([
-      "--server", local.url,
+      "--connect", local.url,
       "register",
       "--to", urlToken,
       "--auth-token", ""
@@ -173,7 +169,7 @@ test("register does not echo tokens from backend errors", async () => {
 
   try {
     const result = await runCli([
-      "--server", local.url,
+        "--connect", local.url,
       "register",
       "--to", `${local.url}/parent?codexhub_token=parent-url-secret`,
       "--auth-token", "body-secret"
@@ -210,7 +206,7 @@ test("register rejects malformed or inactive successful responses", async () => 
   try {
     for (const responseBody of responses) {
       const result = await runCli([
-        "--server", local.url,
+        "--connect", local.url,
         "register",
         "--to", `${local.url}/parent?codexhub_token=request-secret`
       ]);
@@ -263,7 +259,7 @@ test("register reports an unavailable local backend without starting one", async
   const localUrl = unused.url;
   await close(unused.server);
   const result = await runCli([
-    "--server", localUrl,
+    "--connect", localUrl,
     "register",
     "--to", "http://127.0.0.1:1/?codexhub_token=parent-url-secret"
   ], { CODEX_HUB_AUTH_TOKEN: "local-secret" });
@@ -279,8 +275,6 @@ test("register help exposes the required options and missing --to fails", async 
   assert.equal(help.code, 0, outputOf(help));
   assert.match(help.stdout, /--to <url>/);
   assert.match(help.stdout, /--auth-token <token>/);
-  assert.match(help.stdout, /--machine-id <id>/);
-  assert.match(help.stdout, /--name <name>/);
 
   const missing = await runCli(["register"]);
   assert.equal(missing.code, 1, outputOf(missing));

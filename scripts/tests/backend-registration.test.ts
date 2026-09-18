@@ -85,9 +85,7 @@ test("backend registration reuses child runtime and survives parent restart or c
         headers: jsonHeaders,
         body: JSON.stringify({
           url: fixture.parentUrl,
-          authToken: fixture.parentAuthToken,
-          machineId: "backend-registration-child",
-          name: "Backend registration child"
+          authToken: fixture.parentAuthToken
         })
       }
     );
@@ -461,7 +459,7 @@ test("the real register CLI attaches a running child backend without another app
     );
     await waitFor(
       async () => (await apiJson<MachinesBody>(fixture.parentUrl, "/api/machines", fixture.parentAuthToken)).body.machines,
-      (machines) => machines?.some((machine) => machine.machineId === "backend-registration-cli-child" && machine.online === true) === true,
+      (machines) => machines?.some((machine) => machine.machineId === "backend-registration-child" && machine.online === true) === true,
       "CLI-created registered machine online"
     );
     const after = await fixture.readMockCodexStats();
@@ -483,8 +481,7 @@ test("a child backend without localMachine is rejected by parent registration", 
         headers: jsonHeaders,
         body: JSON.stringify({
           url: fixture.parentUrl,
-          authToken: fixture.parentAuthToken,
-          machineId: "backend-registration-no-local-machine"
+          authToken: fixture.parentAuthToken
         })
       }
     );
@@ -512,9 +509,7 @@ const registerChildBackend = async (fixture: BackendRegistrationFixture) => {
       headers: jsonHeaders,
       body: JSON.stringify({
         url: fixture.parentUrl,
-        authToken: fixture.parentAuthToken,
-        machineId: "backend-registration-child",
-        name: "Backend registration child"
+        authToken: fixture.parentAuthToken
       })
     }
   );
@@ -540,15 +535,11 @@ const runRegisterCli = async (fixture: BackendRegistrationFixture) => {
     const child = spawn(process.execPath, [
       tsxCli,
       "src/cli/codexhub.ts",
-      "--server",
+      "--connect",
       fixture.childUrl,
       "register",
       "--to",
-      fixture.parentUrl,
-      "--machine-id",
-      "backend-registration-cli-child",
-      "--name",
-      "Backend registration CLI child"
+      fixture.parentUrl
     ], {
       cwd: projectRoot,
       env: {

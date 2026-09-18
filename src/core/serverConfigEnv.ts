@@ -5,10 +5,6 @@ const stateEnvNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 type AppliedConfigEntry = { inheritedValue: string | undefined; configValue: string };
 const appliedConfigEnvironments = new WeakMap<object, Map<string, AppliedConfigEntry>>();
-const configAliasPairs = [
-  ["CODEX_HUB_HOST", "CODEX_HUB_AUTHORITY_HOST"],
-  ["CODEX_HUB_PORT", "CODEX_HUB_AUTHORITY_PORT"]
-] as const;
 
 export const normalizeServerConfigEnv = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -50,14 +46,6 @@ export const applyServerConfigEnv = (
     target[key] = value;
   };
   for (const [key, value] of Object.entries(normalized)) setAppliedValue(key, value);
-  for (const [canonical, legacy] of configAliasPairs) {
-    const canonicalConfigured = Object.prototype.hasOwnProperty.call(normalized, canonical);
-    const legacyConfigured = Object.prototype.hasOwnProperty.call(normalized, legacy);
-    if (canonicalConfigured === legacyConfigured) continue;
-    const configuredKey = canonicalConfigured ? canonical : legacy;
-    const counterpart = canonicalConfigured ? legacy : canonical;
-    setAppliedValue(counterpart, normalized[configuredKey]);
-  }
   return target;
 };
 

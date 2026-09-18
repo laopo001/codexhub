@@ -1102,9 +1102,7 @@ export const appServerTunnelFrameSchema = z.discriminatedUnion("type", [
 
 export const parentRegistrationConnectSchema = z.object({
   url: z.string().url(),
-  authToken: z.string().optional(),
-  machineId: z.string().min(1).optional(),
-  name: z.string().min(1).optional()
+  authToken: z.string().optional()
 }).strict();
 
 const remoteBackendCommandTypeSchema = z.enum([

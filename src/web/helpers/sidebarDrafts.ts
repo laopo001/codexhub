@@ -21,9 +21,7 @@ export type SidebarDraftStore = {
 };
 
 const defaultParentRegistrationDraft = (): ParentRegistrationDraft => ({
-  url: "",
-  machineId: "",
-  name: ""
+  url: ""
 });
 
 export const createSidebarDraftStore = (): SidebarDraftStore => {

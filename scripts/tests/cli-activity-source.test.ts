@@ -348,9 +348,7 @@ const registerChildBackend = async (fixture: BackendRegistrationFixture) => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         url: fixture.parentUrl,
-        authToken: fixture.parentAuthToken,
-        machineId: "backend-registration-child",
-        name: "Backend registration child"
+        authToken: fixture.parentAuthToken
       })
     }
   );

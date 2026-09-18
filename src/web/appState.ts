@@ -2,6 +2,7 @@ import type { OpenThreadPresence } from "../shared/apiContract.js";
 import { useReducer, useRef, useState } from "react";
 import type { CodexRecord } from "../shared/recordTypes.js";
 import type { CodexHubRealtimeClient } from "../shared/realtimeClient.js";
+import type { ProjectTarget } from "../shared/petActivityRouting.js";
 import { createComposerDraftStore, initAuthTokenFromUrl } from "./appHelpers.js";
 import { useIntegrationState, useUiState } from "./appStateSlices.js";
 import { subagentDialogConversationThreads } from "./helpers/subagentThreadDialog.js";
@@ -9,7 +10,6 @@ import type {
   PendingThreadRestoreAttemptCounts,
   PendingThreadRestoreTargets
 } from "./helpers/pendingThreadRestore.js";
-import type { SurfaceProjectTarget } from "./helpers/surfaceThreadScope.js";
 import {
   openThreadReducer,
   reduceConversationThreadState,
@@ -170,8 +170,8 @@ export const useAppState = () => {
   const [pendingRestoreActiveThreadId, setPendingRestoreActiveThreadId] = useState("");
   const [pendingRestoreTargets, setPendingRestoreTargets] = useState<PendingThreadRestoreTargets>({});
   const pendingRestoreAttemptCountsRef = useRef<PendingThreadRestoreAttemptCounts>({});
-  const [threadProjectTargets, setThreadProjectTargets] = useState<Record<string, SurfaceProjectTarget | undefined>>({});
-  const threadProjectTargetsRef = useRef<Record<string, SurfaceProjectTarget | undefined>>({});
+  const [threadProjectTargets, setThreadProjectTargets] = useState<Record<string, ProjectTarget | undefined>>({});
+  const threadProjectTargetsRef = useRef<Record<string, ProjectTarget | undefined>>({});
   threadProjectTargetsRef.current = threadProjectTargets;
   const [initialized, setInitialized] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({

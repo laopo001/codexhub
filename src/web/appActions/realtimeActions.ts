@@ -75,7 +75,6 @@ import { authorityInstanceRecovery } from "../helpers/authorityInstanceRecovery.
 import { restorePersistedThreadTabs } from "../helpers/threadRestore.js";
 import {
   workspaceIncludesProjectTarget,
-  type SurfaceProjectTarget,
   type SurfaceThreadTarget
 } from "../helpers/surfaceThreadScope.js";
 import {
@@ -137,8 +136,8 @@ type RealtimeActionsContext = {
   setSystemStatus: React.Dispatch<React.SetStateAction<SystemStatus>>;
   setTasks: React.Dispatch<React.SetStateAction<LocalTask[]>>;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
-  threadProjectTargetsRef: React.MutableRefObject<Readonly<Record<string, SurfaceProjectTarget | undefined>>>;
-  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget | undefined>>>;
+  threadProjectTargetsRef: React.MutableRefObject<Readonly<Record<string, ProjectTarget | undefined>>>;
+  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, ProjectTarget | undefined>>>;
 };
 
 export type RealtimeActionsDependencies = {
@@ -149,7 +148,7 @@ export type RealtimeActionsDependencies = {
   openThread: (threadId: string, options?: {
     expectedMachineId?: string;
     preferredWorkingDirectory?: string;
-    projectTarget?: SurfaceProjectTarget;
+    projectTarget?: ProjectTarget;
     activate?: boolean;
     deferActivationUntilLoaded?: boolean;
   }) => Promise<void>;

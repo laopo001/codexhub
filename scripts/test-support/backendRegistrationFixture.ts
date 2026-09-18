@@ -194,7 +194,15 @@ export const createBackendRegistrationFixture = async (
   const parentPort = await findFreePort("127.0.0.1");
   const childPort = options.childPort ?? await findFreePort("127.0.0.1");
   const parentOptions = { host: "127.0.0.1", port: parentPort, dataDir: path.join(root, "parent-data"), authToken: parentAuthToken, autoStartRuntime: true, features: { localMachine: false, ssh: false, tasks: false, integrations: false } } as const;
-  const childOptions = { host: "127.0.0.1", port: childPort, dataDir: path.join(root, "child-data"), authToken: childAuthToken, autoStartRuntime: true, features: { localMachine: options.childLocalMachine ?? true, ssh: false, tasks: false, integrations: false } } as const;
+  const childOptions = {
+    host: "127.0.0.1",
+    port: childPort,
+    dataDir: path.join(root, "child-data"),
+    authToken: childAuthToken,
+    autoStartRuntime: true,
+    parentRegistrationIdentity: { machineId: "backend-registration-child", name: "Backend registration child" },
+    features: { localMachine: options.childLocalMachine ?? true, ssh: false, tasks: false, integrations: false }
+  } as const;
   let parent: ServerHandle | undefined;
   let child: ServerHandle | undefined;
   let stopped = false;

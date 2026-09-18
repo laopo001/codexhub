@@ -93,11 +93,9 @@ export const ConnectionsPanel = ({ viewModel }: ConnectionsPanelProps) => {
   React.useEffect(() => {
     if (!parentRegistration.url) return;
     setParentRegistrationDraft((current) => ({
-      url: current.url || parentRegistration.url || "",
-      machineId: current.machineId || parentRegistration.machineId || "",
-      name: current.name || parentRegistration.name || ""
+      url: current.url || parentRegistration.url || ""
     }));
-  }, [parentRegistration.machineId, parentRegistration.name, parentRegistration.url, setParentRegistrationDraft]);
+  }, [parentRegistration.url, setParentRegistrationDraft]);
 
   const sshQuery = sshSearch.trim();
   const visibleSshConfigHostOptions = sshConfigHostOptions.filter((host) => sshHostSearchMatches(host, sshQuery));
@@ -285,23 +283,6 @@ export const ConnectionsPanel = ({ viewModel }: ConnectionsPanelProps) => {
               spellCheck={false}
               disabled={parentRegistrationBusy}
             />
-            <details className="registeredParentOptions">
-              <summary>Options</summary>
-              <input
-                value={parentRegistrationDraft.name}
-                onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, name: event.target.value }))}
-                placeholder="Machine name"
-                spellCheck={false}
-                disabled={parentRegistrationBusy}
-              />
-              <input
-                value={parentRegistrationDraft.machineId}
-                onChange={(event) => setParentRegistrationDraft((current) => ({ ...current, machineId: event.target.value }))}
-                placeholder="Machine ID"
-                spellCheck={false}
-                disabled={parentRegistrationBusy}
-              />
-            </details>
             {parentRegistration.url || parentRegistration.machineId || parentRegistration.message ? (
               <div className="registeredParentMeta">
                 {parentRegistration.url ? <code title={parentRegistration.url}>{parentRegistration.url}</code> : null}

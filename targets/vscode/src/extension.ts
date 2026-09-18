@@ -2,10 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import * as vscode from "vscode";
-import {
-  embeddedAuthorityDataDirectory,
-  migrateLegacyEmbeddedAuthorityData
-} from "../../../src/core/authorityPaths.js";
+import { embeddedAuthorityDataDirectory } from "../../../src/core/authorityPaths.js";
 import {
   authorityBuildId,
   ensureEmbeddedAuthority,
@@ -20,7 +17,6 @@ import {
   formatVscodeSurfacePrefix,
   resolveVscodeChannel,
   resolveWorkspaceFileLaunchReference,
-  workspaceFileForAuthorityRegistration,
   type VscodeChannel,
   type VscodeWorkspaceFileLike
 } from "../../../src/shared/surfaceTypes.js";
@@ -442,9 +438,6 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
 
   private async startAuthorityService(): Promise<VscodeCodexHubServer> {
     const dataDir = embeddedAuthorityDataDirectory();
-    await migrateLegacyEmbeddedAuthorityData(this.context.globalStorageUri.fsPath, dataDir).catch((error: unknown) => {
-      console.warn(`codexhub vscode could not migrate legacy authority data: ${errorText(error)}`);
-    });
     await removeLegacyVscodeAuthorityTokenFile(dataDir).catch((error: unknown) => {
       console.warn(`codexhub vscode could not remove obsolete authority token file: ${errorText(error)}`);
     });
@@ -486,10 +479,7 @@ class CodexHubWorkspaceViewProvider implements vscode.WebviewViewProvider, vscod
   ) {
     const client = createCodexHubApiClient({ baseUrl: server.url, authToken: server.authToken });
     const vscodeChannel = resolveVscodeChannel(vscode.env.uriScheme, vscode.env.appName) ?? undefined;
-    const workspaceFile = workspaceFileForAuthorityRegistration(
-      fileWorkspaceFileLaunchReference(),
-      server.replacementExpected
-    );
+    const workspaceFile = fileWorkspaceFileLaunchReference();
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {

@@ -14,7 +14,8 @@ test("shared Web exclusively owns authority heartbeat while surfaces only own pr
   ]);
 
   assert.match(webEffects, /apiRoutes\.heartbeatWebClient/);
-  assert.match(webEffects, /pre-WebClientHub authority/);
+  assert.doesNotMatch(webEffects, /pre-WebClientHub authority/);
+  assert.doesNotMatch(webEffects, /embedded\/surfaces\/.*heartbeat/);
   assert.match(webEffects, /visibilitychange/);
   assert.match(webEffects, /codexhub\.recoverSurface/);
   assert.doesNotMatch(vscodeExtension, /heartbeatEmbeddedSurface|surfaceHeartbeatMs|heartbeatTimer/);

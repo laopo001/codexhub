@@ -94,7 +94,7 @@ const main = async () => {
         server = await startServer({ host: "127.0.0.1", port });
       }
     });
-    const serverChild = await startRegisteredServer(apiBase, `registered-server-smoke-${process.pid}`, "Registered Server Smoke", childServerDataDir);
+    const serverChild = await startRegisteredServer(apiBase, childServerDataDir);
     await waitForChildServer(serverChild.apiBase, serverChild);
     const serverIdentity = await readAuthorityRegistration(serverChild.apiBase);
     await runRegisteredScenario({
@@ -602,7 +602,7 @@ const startRegisteredMachine = (apiBase: string, machineId: string, machineName:
   return Object.assign(child, { output: () => output });
 };
 
-const startRegisteredServer = async (apiBase: string, machineId: string, machineName: string, dataDir: string) => {
+const startRegisteredServer = async (apiBase: string, dataDir: string) => {
   const port = await findFreePort();
   let output = "";
   const child = spawn(process.execPath, [
@@ -615,11 +615,7 @@ const startRegisteredServer = async (apiBase: string, machineId: string, machine
     "--port",
     String(port),
     "--register-to",
-    apiBase,
-    "--register-machine-id",
-    machineId,
-    "--register-name",
-    machineName
+    apiBase
   ], {
     cwd: repoRoot,
     env: {

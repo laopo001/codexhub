@@ -42,7 +42,7 @@ test("parses a start command and its supported options", () => {
 });
 
 test("parses quoted arguments, env prefixes, shell wrappers, and line continuations", () => {
-  const command = String.raw`env CODEXHUB_TEST=1 bash -lc 'codexhub send ${threadId} "two words" --cwd "/tmp/my project" --server=http://localhost:8788'`;
+  const command = String.raw`env CODEXHUB_TEST=1 bash -lc 'codexhub send ${threadId} "two words" --cwd "/tmp/my project" --connect=http://localhost:8788'`;
   assert.deepEqual(invocation(parseCodexhubInvocation(command)), {
     operation: "send",
     threadId,

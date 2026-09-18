@@ -23,7 +23,6 @@ export type EmbeddedAuthorityHandle = {
   authorityId: string;
   buildId: string;
   authToken: string;
-  replacementExpected?: boolean;
   startedByCaller: boolean;
   pid?: number;
   serverInstanceId: string;
@@ -76,9 +75,7 @@ export type AuthorityRestartLaunchSpec = {
   oldServerInstanceId: string;
 };
 
-/** Cross-build file contract. Future bundles must continue to read V1. */
-export type AuthorityRestartHandoffV1 = {
-  version: 1;
+export type AuthorityRestartHandoff = {
   spec: AuthorityRestartLaunchSpec;
   authToken: string;
 };
@@ -111,7 +108,6 @@ export const shouldStopOwnedAuthorityProcess = (
 };
 
 const authorityIdFileName = "authority-id";
-const legacyAuthorityIdFileNames = ["vscode-authority-id"];
 
 export const resolveAuthorityId = async (dataDir: string) => {
   await mkdir(dataDir, { recursive: true });
@@ -127,18 +123,6 @@ export const resolveAuthorityId = async (dataDir: string) => {
     return await read(filePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  for (const legacyName of legacyAuthorityIdFileNames) {
-    const legacyPath = path.join(dataDir, legacyName);
-    try {
-      const value = await read(legacyPath);
-      await writeFile(filePath, `${value}\n`, { flag: "wx", mode: 0o600 }).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      });
-      return value;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
   }
   const candidate = `authority-${randomUUID()}`;
   try {
@@ -165,7 +149,7 @@ export const authorityBuildId = async (files: string[], prefix = "authority") =>
   return `${prefix}:${size}:${hash.digest("hex").slice(0, 20)}`;
 };
 
-export const parseAuthorityRestartHandoff = (raw: string): AuthorityRestartHandoffV1 => {
+export const parseAuthorityRestartHandoff = (raw: string): AuthorityRestartHandoff => {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -176,20 +160,14 @@ export const parseAuthorityRestartHandoff = (raw: string): AuthorityRestartHando
     throw new Error("Invalid authority restart handoff envelope.");
   }
   const envelope = value as Record<string, unknown>;
-  if (!("version" in envelope)) {
-    throw new Error("Unsupported authority restart handoff version: missing version.");
-  }
-  if (envelope.version !== 1) {
-    throw new Error(`Unsupported authority restart handoff version: ${String(envelope.version)}.`);
-  }
-  if (Object.keys(envelope).some((key) => !["version", "spec", "authToken"].includes(key))) {
+  if (Object.keys(envelope).some((key) => !["spec", "authToken"].includes(key))) {
     throw new Error("Invalid authority restart handoff envelope fields.");
   }
   if (!envelope.spec || typeof envelope.spec !== "object" || Array.isArray(envelope.spec)
     || typeof envelope.authToken !== "string") {
     throw new Error("Invalid authority restart handoff envelope.");
   }
-  return envelope as AuthorityRestartHandoffV1;
+  return envelope as AuthorityRestartHandoff;
 };
 
 /**
@@ -281,7 +259,7 @@ const spawnRestartSupervisor = async (spec: AuthorityRestartLaunchSpec, authToke
   const logPath = path.join(spec.dataDir, "authority-restart.log");
   await mkdir(spec.dataDir, { recursive: true });
   const handoffPath = path.join(spec.dataDir, `authority-restart-${randomUUID()}.json`);
-  await writeFile(handoffPath, JSON.stringify({ version: 1, spec, authToken } satisfies AuthorityRestartHandoffV1), { flag: "wx", mode: 0o600 });
+  await writeFile(handoffPath, JSON.stringify({ spec, authToken } satisfies AuthorityRestartHandoff), { flag: "wx", mode: 0o600 });
   const logFd = openSync(logPath, "a", 0o600);
   try {
     const childEnv: NodeJS.ProcessEnv = { ...(process.env as NodeJS.ProcessEnv) };
@@ -313,8 +291,6 @@ export const runAuthorityRestartSupervisor = async (handoffPath: string) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     });
   }
-  // V1 is a compatibility boundary: a newer bundle must retain this parser
-  // even when it evolves the successor launch spec.
   const handoff = parseAuthorityRestartHandoff(raw);
   const spec = handoff.spec;
   const authToken = handoff.authToken;
@@ -423,7 +399,7 @@ export const ensureEmbeddedAuthority = async (
     const authorityId = await resolveAuthorityId(input.dataDir);
     const host = input.host ?? await resolveEmbeddedAuthorityHost(input.dataDir, environment);
     input = { ...input, environment, host, requireHost: input.requireHost ?? Boolean(
-      input.host !== undefined || environment.CODEX_HUB_HOST?.trim() || environment.CODEX_HUB_AUTHORITY_HOST?.trim()
+      input.host !== undefined || environment.CODEX_HUB_HOST?.trim()
     ) };
     let existing = await probeEmbeddedAuthority(url, authorityId, Boolean(input.authToken), input.authToken);
     if (existing) return authorityHandle(input, url, authorityId, existing, false);
@@ -487,7 +463,6 @@ const authorityHandle = (
     authorityId,
     buildId: input.buildId,
     authToken: input.authToken,
-    replacementExpected: Boolean(health.build && health.build !== input.buildId),
     startedByCaller,
     serverInstanceId: requireServerInstanceId(health),
     localMachineEnabled: health.features?.localMachine !== false

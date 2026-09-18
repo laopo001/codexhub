@@ -68,19 +68,7 @@ const main = async () => {
 };
 
 const prepareAuthorityPortForSmoke = async () => {
-  const canonical = process.env.CODEX_HUB_PORT?.trim();
-  const legacy = process.env.CODEX_HUB_AUTHORITY_PORT?.trim();
-  let configuredPort: number | undefined;
-  if (canonical && legacy && canonical !== legacy) {
-    console.log("electron smoke: CODEX_HUB_PORT and CODEX_HUB_AUTHORITY_PORT conflict; using an isolated test port");
-  } else {
-    configuredPort = authorityServicePort(process.env);
-  }
-  const candidate = configuredPort ?? authorityServicePort({
-    ...process.env,
-    CODEX_HUB_PORT: undefined,
-    CODEX_HUB_AUTHORITY_PORT: undefined
-  });
+  const candidate = authorityServicePort(process.env);
   if (!await isPortListening(candidate)) return candidate;
   const port = await findFreePort();
   console.log(`electron smoke: shared authority port ${candidate} is busy; using isolated test port ${port}`);
@@ -129,7 +117,6 @@ const runElectronSmoke = async (dataDir: string, pluginDir: string, userDataDir:
     CODEX_HUB_ELECTRON_SMOKE: "1",
     CODEX_HUB_PORT: String(authorityPort)
   };
-  delete env.CODEX_HUB_AUTHORITY_PORT;
   delete env.ELECTRON_RUN_AS_NODE;
 
   const child = spawn(electronBin, [

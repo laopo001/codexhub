@@ -6,8 +6,7 @@ import {
   workspaceTargetMatchesCurrentWindow
 } from "../../targets/vscode/src/workspaceStateScope.js";
 import {
-  normalizeVscodeWorkspaceIdentity,
-  workspaceFileForAuthorityRegistration
+  normalizeVscodeWorkspaceIdentity
 } from "../../src/shared/surfaceTypes.js";
 import { vscodeUiStateStorageKey, webUiStateStorageKey } from "../../src/web/appConfig.js";
 
@@ -212,13 +211,6 @@ test("vscodeUiStateStorageKey generates canonical v4 profile keys and rejects v3
 
 test("ordinary Web uses one canonical browser-profile state key", () => {
   assert.equal(webUiStateStorageKey, "codexhub-ui-state-v6");
-});
-
-test("replacement extensions omit new workspace fields until the old authority yields", () => {
-  const workspaceFile = "/home/laop/projects/codexhub/team.code-workspace";
-  assert.equal(workspaceFileForAuthorityRegistration(workspaceFile, true), undefined);
-  assert.equal(workspaceFileForAuthorityRegistration(workspaceFile, false), workspaceFile);
-  assert.equal(workspaceFileForAuthorityRegistration(workspaceFile), workspaceFile);
 });
 
 test("vscode webview iframe explicitly grants clipboard permissions", async () => {

@@ -1,9 +1,9 @@
 import { recordsToViews } from "../../core/codexRecordView.js";
 import { petIdPattern } from "../../shared/petTypes.js";
 import type { CodexRecord, CodexRecordView } from "../../shared/recordTypes.js";
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import { defaultAppSettings, readCurrentSurfaceUiStateRaw } from "../appConfig.js";
 import type { AppSettings, PendingUserMessage, TextAttachment, ThreadQueueItem, WebRecordView } from "../types.js";
-import type { SurfaceProjectTarget } from "./surfaceThreadScope.js";
 import { browserId } from "./common.js";
 
 export type ComposerDraftStore = {
@@ -566,7 +566,7 @@ const storedStringArrayRecord = (value: unknown) => {
 export type PersistedOpenThreadTarget = {
   machineId: string;
   workingDirectory?: string;
-  projectTarget?: SurfaceProjectTarget;
+  projectTarget?: ProjectTarget;
 };
 
 const storedOpenThreadTargets = (value: unknown) => {

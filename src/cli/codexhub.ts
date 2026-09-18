@@ -35,8 +35,6 @@ type ServerCommandOptions = {
   serveStatic?: string;
   registerTo?: string;
   registerAuthToken?: string;
-  registerMachineId?: string;
-  registerName?: string;
   approvalPolicy?: string;
   approvalsReviewer?: string;
   sandbox?: string;
@@ -44,7 +42,6 @@ type ServerCommandOptions = {
 
 type MachineCommandOptions = {
   connect?: string;
-  server?: string;
   authToken?: string;
   machineId?: string;
   type?: "local" | "ssh" | "registered";
@@ -57,8 +54,6 @@ type MachineCommandOptions = {
 type RegisterCommandOptions = {
   to: string;
   authToken?: string;
-  machineId?: string;
-  name?: string;
 };
 
 type SshConnectCommandOptions = {
@@ -120,8 +115,7 @@ applyServerConfigEnv(cliConfigEnv);
 const program = new Command()
   .name("codexhub")
   .description("Start and manage CodexHub")
-  .option("--connect <url>", "CodexHub backend URL")
-  .option("--server <url>", "compatibility alias for --connect");
+  .option("--connect <url>", "CodexHub backend URL");
 
 program
   .command("server")
@@ -131,8 +125,6 @@ program
   .option("--serve-static <dir>", "serve built web assets from this directory")
   .option("--register-to <url>", "also register this server as a machine with a parent CodexHub server")
   .option("--register-auth-token <token>", "parent CodexHub auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
-  .option("--register-machine-id <id>", "legacy parent profile hint (shared authority identity takes precedence)")
-  .option("--register-name <name>", "legacy parent name hint (shared authority name takes precedence)")
   .option("--approval-policy <policy>", "approval policy override for launched Codex app-server")
   .option("--approvals-reviewer <reviewer>", "approval reviewer override for launched Codex app-server")
   .option("--sandbox <mode>", "default sandbox mode for launched Codex app-server")
@@ -142,8 +134,7 @@ program
     const appServerLaunch = appServerLaunchOptions(options);
     const parentUrl = options.registerTo ?? process.env.CODEX_HUB_REGISTER_TO?.trim();
     const parent = parentUrl ? resolveRegisterParentTarget(parentUrl, options.registerAuthToken) : undefined;
-    if (!parent && (options.registerTo !== undefined || options.registerAuthToken !== undefined
-      || options.registerMachineId !== undefined || options.registerName !== undefined)) {
+    if (!parent && (options.registerTo !== undefined || options.registerAuthToken !== undefined)) {
       throw new Error("Registration options require --register-to or CODEX_HUB_REGISTER_TO.");
     }
     const backend = await ensureLocalAuthority({
@@ -164,8 +155,7 @@ program
       await lease.ready;
       if (parent) {
         const registration = await registerParent({ localServerUrl: backend.baseUrl, localAuthToken: backend.authority.authToken,
-          parentUrl: parent.url, parentAuthToken: parent.authToken,
-          machineId: options.registerMachineId, name: options.registerName });
+          parentUrl: parent.url, parentAuthToken: parent.authToken });
         if (registration.registration?.machineId) {
           console.error(`codexhub parent registration identity: ${registration.registration.machineId} (${registration.registration.name})`);
         }
@@ -181,7 +171,6 @@ program
   .command("machine")
   .description("Register this machine so it can start runtime threads for project paths")
   .option("--connect <url>", "CodexHub backend URL for this machine command")
-  .option("--server <url>", "compatibility alias for the machine command's --connect")
   .option("--auth-token <token>", "codexhub API auth token (defaults to CODEX_HUB_AUTH_TOKEN)")
   .option("--machine-id <id>", "stable machine id")
   .option("--type <type>", "machine connection type: local, ssh, or registered", "registered")
@@ -193,10 +182,8 @@ program
     const appServerLaunch = appServerLaunchOptions(options);
     await runCodexhubMachine({
       apiBase: resolveConnectionUrl(
-        program.opts<{ connect?: string; server?: string }>().connect,
-        program.opts<{ connect?: string; server?: string }>().server,
-        options.connect,
-        options.server
+        program.opts<{ connect?: string }>().connect,
+        options.connect
       ),
       authToken: options.authToken ?? process.env.CODEX_HUB_AUTH_TOKEN,
       machineId: options.machineId,
@@ -277,17 +264,13 @@ program
   .description("Register the local CodexHub server with a parent server and exit")
   .requiredOption("--to <url>", "parent CodexHub server URL (a codexhub_token query token is supported)")
   .option("--auth-token <token>", "parent server auth token (defaults to CODEX_HUB_REGISTER_AUTH_TOKEN)")
-  .option("--machine-id <id>", "stable machine id for the parent registration")
-  .option("--name <name>", "display name for the parent registration")
   .action(async (options: RegisterCommandOptions) => {
     const parent = resolveRegisterParentTarget(options.to, options.authToken);
     await registerParent({
       localServerUrl: apiBase(),
       localAuthToken: process.env.CODEX_HUB_AUTH_TOKEN,
       parentUrl: parent.url,
-      parentAuthToken: parent.authToken,
-      machineId: options.machineId,
-      name: options.name
+      parentAuthToken: parent.authToken
     });
     console.log("Registration request accepted by local CodexHub server.");
   });
@@ -624,11 +607,11 @@ async function runConversationControlCommand(
 }
 
 async function resolveConversationBackend(cwd: string | undefined, deadline: number) {
-  const rootOptions = program.opts<{ connect?: string; server?: string }>();
-  const explicitlySelected = Boolean(rootOptions.connect?.trim() || rootOptions.server?.trim());
+  const rootOptions = program.opts<{ connect?: string }>();
+  const explicitlySelected = Boolean(rootOptions.connect?.trim());
   const environmentSelected = Boolean(process.env.CODEX_HUB_SERVER_URL?.trim());
   if (explicitlySelected || environmentSelected) {
-    return { baseUrl: resolveConnectionUrl(rootOptions.connect, rootOptions.server), status: "connected" as const };
+    return { baseUrl: resolveConnectionUrl(rootOptions.connect), status: "connected" as const };
   }
   return await ensureLocalServer({
     baseUrl: defaultLocalServerUrl(),
@@ -749,16 +732,14 @@ function apiUrl(path: string) {
 }
 
 function apiBase() {
-  const options = program.opts<{ connect?: string; server?: string }>();
-  return resolveConnectionUrl(options.connect, options.server);
+  const options = program.opts<{ connect?: string }>();
+  return resolveConnectionUrl(options.connect);
 }
 
 function resolveConnectionUrl(...values: Array<string | undefined>) {
   const explicit = values.filter((value): value is string => Boolean(value?.trim())).map((value) => value.trim());
   const unique = new Map(explicit.map((value) => [connectionKey(value), value]));
-  if (unique.size > 1) {
-    throw new Error("--connect and --server specify different CodexHub backends.");
-  }
+  if (unique.size > 1) throw new Error("--connect specifies different CodexHub backends.");
   const selected = unique.values().next().value as string | undefined;
   const value = selected ?? defaultServerUrl();
   const parsed = new URL(value);

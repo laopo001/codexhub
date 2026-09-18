@@ -82,8 +82,6 @@ codexhub server --register-to http://parent-host:28788
 
 本机后端地址沿用 CLI 的全局 `--connect` / `CODEX_HUB_SERVER_URL` 设置；未显式设置时使用共享 authority 地址（Windows/macOS/Linux 默认 `28788`，WSL 默认 `28789`，可用 `CODEX_HUB_PORT` 覆盖）。`register` 连接已有后端，不会自动启动或切换另一个后端。
 
-共享 authority 的注册 machine ID 和名称由 authority identity 决定，CLI 的旧 `--register-machine-id` / `--register-name` 提示不会覆盖它；`server` 注册时会输出实际 identity，避免不同入口改变同一台机器的身份。
-
 子机通过主动建立的 WebSocket 接入父机，无需开放子机后端或 app-server 的入站端口。父机发送 CodexHub 命令并订阅事件；子机后端统一处理本地 UI 和父机请求，管理同一个 local runtime。父机不为这条后端注册连接建立 app-server 协议客户端。取消注册或父机失联只释放远程连接与订阅，不关闭子机 runtime 或中断本地执行。thread transcript 的最终来源仍是官方 app server。
 
 父机只接入子机的本机执行能力，不导入子机其它远端 machines、tasks 或 config。它把子机显示为动态 `registered` machine，不把该 machine 写入父机 `config.yaml`；在线时显示 success message，断线时显示 warning message 并移除在线 machine。首次加载已有连接不补弹提示。父机上的 machine identity 与子机 local identity 在注册边界映射，project identity 仍是各自 authority 下的 `machineId + path`。文件与目录操作始终由子机执行。
@@ -119,7 +117,7 @@ CODEX_HUB_SSH_AUTOCONNECT=0
 ~/.config/codexhub/config.yaml
 ```
 
-可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。普通 Node server、Electron 和 VS Code detached authority 的非编辑器配置也统一从这里读取；它们通过 `env` 映射承载监听地址、authority 端口、app-server、SSH、插件、通知、catalog/runtime 以及 Electron 行为等 CodexHub 参数。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。配置优先级是 CLI 显式参数 > `config.yaml` > 继承的进程环境变量 > 内置默认值；CodexHub 不读取或解析 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。旧版 `~/.local/share/codexhub/server-state.yaml` 或同一 `CODEX_HUB_DATA_DIR` 下的 `server-state.yaml` 会在首次启动时迁移写入新的 `config.yaml`。
+可以通过 `CODEX_HUB_DATA_DIR` 覆盖配置目录。这个 YAML 保存共享 UI 偏好、parent registration、projects、tasks、SSH hosts、local/SSH machine 元数据等本机控制面配置，也会包含 `updatedAt`、task 最近 run 摘要这类轻量状态字段。普通 Node server、Electron 和 VS Code detached authority 的非编辑器配置也统一从这里读取；它们通过 `env` 映射承载监听地址、authority 端口、app-server、SSH、插件、通知、catalog/runtime 以及 Electron 行为等 CodexHub 参数。父 server 收到的 `registered` machine 只存在于运行时，不写入这里；旧配置中的 registered machine 历史元数据会在加载时自动清理，但它关联的 project/task 配置仍保留。包含 parent auth token 时配置文件会以 `0600` 写入；token 只由后端用于 machine WebSocket，不通过配置或 registration API 返回给 Web。配置优先级是 CLI 显式参数 > `config.yaml` > 继承的进程环境变量 > 内置默认值；CodexHub 不读取或解析 `.env`。它不保存 thread summary 或完整 transcript；thread 内容来自 session 从官方 Codex app-server 同步的 turns snapshot、item/rawResponseItem/tokenUsage 实时事件。
 
 `config.yaml` 里的 `env` 适合 embedded authority service 这类不方便配置 shell 环境变量的场景。例如：
 
@@ -170,11 +168,11 @@ codexhub --connect http://remote-host:28788 start "分析这个项目" --name "�
 codexhub --connect http://remote-host:28788 send <threadId> "继续分析"
 ```
 
-`--connect` 是首选连接参数，`--server` 保留为兼容别名；两者显式指定不同地址时会报错。后端地址也可通过 `CODEX_HUB_SERVER_URL` 设置；后端启用认证时使用 `CODEX_HUB_AUTH_TOKEN`。
+`--connect` 指定 CodexHub 后端地址。后端地址也可通过 `CODEX_HUB_SERVER_URL` 设置；后端启用认证时使用 `CODEX_HUB_AUTH_TOKEN`。
 
 默认选择目标后端的在线 local machine，显式 `--machine <machineId>` 可以选择其 SSH 或 registered machine。CLI 中的会话就是现有 `thread`，复用同一个 machine runtime。
 
-`start` 默认在首轮完成后继续监听同一 thread 的实时 canonical records，直到执行 `codexhub end <threadId>`；后续 `send` 的回复会继续由原 `start` 输出，`stop` 只停止当前轮并保留监听。`send` 只投递提示词、运行中的引导或后续新任务，返回投递确认；执行回复由原 `start` 输出。`--timeout` 可限制默认 start 的监听时长；未指定时没有整个监听的 600 秒上限。Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` / `--server` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动与 VSCode/Electron 相同的本机 authority（默认 loopback 的 `28788`，WSL 为 `28789`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
+`start` 默认在首轮完成后继续监听同一 thread 的实时 canonical records，直到执行 `codexhub end <threadId>`；后续 `send` 的回复会继续由原 `start` 输出，`stop` 只停止当前轮并保留监听。`send` 只投递提示词、运行中的引导或后续新任务，返回投递确认；执行回复由原 `start` 输出。`--timeout` 可限制默认 start 的监听时长；未指定时没有整个监听的 600 秒上限。Ctrl+C 退出 CLI 不停止后端任务。未指定 `--connect` 且未设置非空 `CODEX_HUB_SERVER_URL` 时，`start` 和 `send` 先复用或自动启动与 VSCode/Electron 相同的本机 authority（默认 loopback 的 `28788`，WSL 为 `28789`，可用 `CODEX_HUB_PORT` 配置）。自动启动的 server 独立于终端运行；CLI 退出不关闭 server 或任务。指定地址时只连接该后端，不可达就报错，不启动替代实例。对话仍是官方 thread，不维护本地会话数据库；Web 和 CLI 使用同一套 HTTP/WebSocket API。
 
 `start` 和 `send` 均不再提供 `--stream`、`--wait` 或 `--no-wait`。`--timeout <秒>` 可限制监听或请求时长；`send --json` 输出适合脚本读取的投递确认，`start` 始终输出可读的实时内容。
 
@@ -474,7 +472,7 @@ CLI、Node.js server、Electron 壳和 VSCode extension 按同一个“执行 au
 | 普通 Linux | `28788` |
 | WSL | `28789` |
 
-WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Windows 共享 localhost 端口空间时避开 Windows 的 `28788`。Remote SSH/Container 在自己的执行环境和网络命名空间中按上表选端口。所有入口统一读取 `CODEX_HUB_PORT`，不在占用时顺延；如果固定端口上不是同一个 `authorityId` 和 embedded surface protocol 的 CodexHub 服务，客户端会明确报错。`CODEX_HUB_AUTHORITY_PORT` 保留为兼容别名；与 `CODEX_HUB_PORT` 同时设置且值不一致时明确报错。显式 CLI `--port` 优先。
+WSL 使用桌面端口的 `+1`，是为了在 WSL mirrored networking 与 Windows 共享 localhost 端口空间时避开 Windows 的 `28788`。Remote SSH/Container 在自己的执行环境和网络命名空间中按上表选端口。所有入口统一读取 `CODEX_HUB_PORT`，不在占用时顺延；如果固定端口上不是同一个 `authorityId` 和 embedded surface protocol 的 CodexHub 服务，客户端会明确报错。显式 CLI `--port` 优先。
 
 第一个客户端会优先从本地 npm/link 包的 `dist-node/authority-service.cjs` 和 `dist` detached 启动服务；没有可用本地包时才使用 VSIX 或 Electron bundle 内的 `authority-service.cjs`。后续客户端只 probe 并 attach。authority ID、共享 `config.yaml` 和 `authority.log` 位于 `CODEX_HUB_DATA_DIR`（默认 `~/.config/codexhub`）；ID 文件尽可能以 `0600` 创建。authority 默认只监听 `127.0.0.1`，因此可直接打开 `http://127.0.0.1:28788`（WSL 为 `28789`）；明确需要局域网访问时，可在共享 `config.yaml` 的 `env` 设置 `CODEX_HUB_HOST: "0.0.0.0"` 或 `"::"`，然后使用执行环境的局域网 IP 和对应端口。只有 extension host 环境或该 authority `config.yaml` 的 `env.CODEX_HUB_AUTH_TOKEN` 显式设置为非空值时，Web/API/WebSocket 才启用认证；显式 token 只通过子进程环境和窗口请求传递，不放进 service 命令行或日志。旧版生成的 `vscode-authority-token` / `authority-token` 文件会在 authority 下次启动时删除，浏览器发现服务未启用认证时也会清掉同 origin 下的旧 token。普通浏览器、VSCode WebView 和 Electron renderer 中的每个 Web 文档都有独立 `webClientId`，统一调用 `/api/web-clients/heartbeat`，每 10 秒 heartbeat，并在页面恢复可见时立即补发。CLI 操作与前台 `server` 管理连接也使用同一 heartbeat 机制保活。最后一次 client 通信后连续 5 分钟没有任何活跃 client，且没有 running turn，才允许退出；embedded workspace surface 的数量和 register/unregister 不参与 authority 生命周期。VSCode/Electron 的 `surfaceId + leaseId` 仍只管理 workspace transient project，并由 embedded Web 在统一 heartbeat 中附带刷新；VSCode Extension Host 和 Electron main 不再各自维护 heartbeat timer，只处理注册、恢复和正常注销。多个客户端注册的 workspace 会聚合成同一 local machine 的 transient projects；相同路径被多个 surface 引用时保留到最后一个 lease 消失。注册只验证目录，authority machine transport 随后启动 Codex app-server 并通过协议握手；Add Thread 只创建用户 thread。
 
@@ -536,8 +534,8 @@ sudo apt install wine64 wine32:i386
 
 可选环境变量：
 
-- `CODEX_HUB_HOST`: 共享 authority 监听 host，默认 `127.0.0.1`；局域网访问需显式设置。`CODEX_HUB_AUTHORITY_HOST` 为兼容别名，两者不一致时报错。
-- `CODEX_HUB_PORT`: CLI、VSCode、Electron 共用的端口覆盖；默认 `28788`，WSL 为 `28789`。`CODEX_HUB_AUTHORITY_PORT` 为兼容别名，两者不一致时报错；CLI `--port` 优先。
+- `CODEX_HUB_HOST`: 共享 authority 监听 host，默认 `127.0.0.1`；局域网访问需显式设置。
+- `CODEX_HUB_PORT`: CLI、VSCode、Electron 共用的端口覆盖；默认 `28788`，WSL 为 `28789`；CLI `--port` 优先。
 - `CODEX_HUB_AUTHORITY_PACKAGE`: 可选的本地 CodexHub npm/link 包根目录；指定后优先使用其中的 `dist-node/authority-service.cjs`、`dist` 和 SSH client bundle
 - `CODEX_HUB_AUTHORITY_NODE`: 可选的 authority Node 可执行文件路径；未设置时优先使用 `PATH` 中的 Node，再回退到宿主运行时
 - `CODEX_HUB_DATA_DIR`: VSCode/Electron 共享 authority 数据目录，默认 `~/.config/codexhub`

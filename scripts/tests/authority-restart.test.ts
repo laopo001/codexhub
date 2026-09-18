@@ -8,7 +8,7 @@ import {
   createAuthorityRestartCoordinator,
   parseAuthorityRestartHandoff,
   runAuthorityRestartSupervisor,
-  type AuthorityRestartHandoffV1,
+  type AuthorityRestartHandoff,
   shouldStopOwnedAuthorityProcess
 } from "../../src/core/embeddedAuthority.js";
 import { embeddedSurfaceProtocolVersion } from "../../src/shared/surfaceTypes.js";
@@ -56,12 +56,11 @@ test("authority restart rejects a surface-only build candidate and coalesces con
   }
 });
 
-test("V1 handoff parses and is consumed even when the spec is invalid", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-handoff-v1."));
+test("restart handoff is consumed even when the spec is invalid", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-handoff."));
   const handoffPath = path.join(root, "handoff.json");
-  const envelope: AuthorityRestartHandoffV1 = {
-    version: 1,
-    spec: {} as AuthorityRestartHandoffV1["spec"],
+  const envelope: AuthorityRestartHandoff = {
+    spec: {} as AuthorityRestartHandoff["spec"],
     authToken: "handoff-secret"
   };
   try {
@@ -74,13 +73,13 @@ test("V1 handoff parses and is consumed even when the spec is invalid", async ()
   }
 });
 
-test("unknown or missing handoff versions are rejected and deleted without token leakage", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-handoff-version."));
+test("malformed restart handoffs are rejected and deleted without token leakage", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-handoff-invalid."));
   const token = "version-secret";
   try {
     for (const [name, envelope, expected] of [
-      ["unknown.json", { version: 99, spec: {}, authToken: token }, /Unsupported authority restart handoff version: 99/],
-      ["missing.json", { spec: {}, authToken: token }, /Unsupported authority restart handoff version: missing/]
+      ["unknown-field.json", { spec: {}, authToken: token, version: 99 }, /Invalid authority restart handoff envelope fields/],
+      ["missing-spec.json", { authToken: token }, /Invalid authority restart handoff envelope/]
     ] as const) {
       const handoffPath = path.join(root, name);
       await writeFile(handoffPath, JSON.stringify(envelope), { mode: 0o600 });

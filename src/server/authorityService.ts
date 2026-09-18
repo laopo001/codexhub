@@ -145,12 +145,6 @@ const parentRegistrationFromEnvironment = () => {
     url,
     ...(process.env.CODEX_HUB_REGISTER_AUTH_TOKEN !== undefined
       ? { authToken: process.env.CODEX_HUB_REGISTER_AUTH_TOKEN }
-      : {}),
-    ...(process.env.CODEX_HUB_REGISTER_MACHINE_ID?.trim()
-      ? { machineId: process.env.CODEX_HUB_REGISTER_MACHINE_ID.trim() }
-      : {}),
-    ...(process.env.CODEX_HUB_REGISTER_NAME?.trim()
-      ? { name: process.env.CODEX_HUB_REGISTER_NAME.trim() }
       : {})
   };
 };

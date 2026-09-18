@@ -1,7 +1,7 @@
 import type { OpenThreadState } from "../types.js";
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import {
-  threadMatchesProjectTarget,
-  type SurfaceProjectTarget
+  threadMatchesProjectTarget
 } from "./surfaceThreadScope.js";
 
 type ActiveThreadSelectionInput = {
@@ -10,8 +10,8 @@ type ActiveThreadSelectionInput = {
   activeWorkspacePath: string;
   openThreads: readonly OpenThreadState[];
   loadingThreadIds?: ReadonlySet<string>;
-  selectedProjectTarget?: SurfaceProjectTarget;
-  threadProjectTargets?: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
+  selectedProjectTarget?: ProjectTarget;
+  threadProjectTargets?: Readonly<Record<string, ProjectTarget | undefined>>;
   restrictToWorkspacePath?: boolean;
 };
 
@@ -19,9 +19,9 @@ export const selectActiveThread = (input: {
   activeTabThreadId: string;
   activeMachineId: string;
   openThreads: readonly OpenThreadState[];
-  selectedProjectTarget?: SurfaceProjectTarget;
+  selectedProjectTarget?: ProjectTarget;
   projectSelectionActive: boolean;
-  threadProjectTargets: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
+  threadProjectTargets: Readonly<Record<string, ProjectTarget | undefined>>;
   fixedSurface: boolean;
 }) => {
   const active = input.openThreads.find((thread) => thread.threadId === input.activeTabThreadId);

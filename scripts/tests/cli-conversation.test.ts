@@ -39,7 +39,7 @@ test("conversation CLI creates, resumes, names, and sends through --connect with
     );
 
     const sent = await runCli(fixture, cliDataDir, [
-      "--server", fixture.childUrl,
+      "--connect", fixture.childUrl,
       "send", first.threadId, "second cli input",
       "--cwd", cwd,
       "--json"
@@ -72,18 +72,17 @@ test("conversation CLI creates, resumes, names, and sends through --connect with
   }
 });
 
-test("conversation CLI rejects conflicting --connect and --server without contacting either backend", { timeout: 15_000 }, async () => {
+test("conversation CLI rejects removed --server without contacting either backend", { timeout: 15_000 }, async () => {
   const fixture = await createBackendRegistrationFixture();
   const cliDataDir = await mkdtemp(path.join(fixture.root, "cli-conversation-conflict-"));
   try {
     const result = await runCli(fixture, cliDataDir, [
-      "--connect", fixture.childUrl,
-      "--server", `${fixture.childUrl}/different`,
+      "--server", fixture.childUrl,
       "start", "should not submit",
       "--name", "Conflict"
     ]);
     assert.notEqual(result.code, 0);
-    assert.match(`${result.stdout}\n${result.stderr}`, /different CodexHub backends/);
+    assert.match(`${result.stdout}\n${result.stderr}`, /unknown option.*server|unknown command/i);
   } finally {
     await rm(cliDataDir, { recursive: true, force: true });
     await fixture.stop();

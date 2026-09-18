@@ -5,6 +5,7 @@ import type { AppServerApprovalDecision, AppServerUserInputAnswers, RealtimeOutg
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import type { ProxyInput } from "../../shared/inputTypes.js";
 import type { CodexRecord } from "../../shared/recordTypes.js";
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import {
   adjacentThreadId,
   apiRouteJson,
@@ -44,7 +45,6 @@ import type {
 import type { ConversationThreadAction, OpenThreadAction } from "../openThreadReducer.js";
 import { apiErrorDetails } from "../helpers/apiErrors.js";
 import { conversationViewsFromRecords } from "../helpers/conversationViews.js";
-import type { SurfaceProjectTarget } from "../helpers/surfaceThreadScope.js";
 import {
   formatAgentQuestionAnswers,
   type AgentQuestion,
@@ -88,8 +88,8 @@ type ThreadActionsContext = {
   dispatchOpenThreads: React.Dispatch<OpenThreadAction>;
   dispatchConversationThread: (action: ConversationThreadAction) => void;
   setThreadOrderByMachine: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
-  threadProjectTargets: Readonly<Record<string, SurfaceProjectTarget | undefined>>;
-  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, SurfaceProjectTarget | undefined>>>;
+  threadProjectTargets: Readonly<Record<string, ProjectTarget | undefined>>;
+  setThreadProjectTargets: React.Dispatch<React.SetStateAction<Record<string, ProjectTarget | undefined>>>;
 };
 
 export type ThreadActionsDependencies = {
@@ -115,7 +115,7 @@ export type OpenThreadOptions = {
   /** Fresh create response; used once so transient creation metadata reaches the first tab. */
   initialThread?: ThreadDetail;
   /** Explicit UI origin; never inferred from the returned workingDirectory. */
-  projectTarget?: SurfaceProjectTarget;
+  projectTarget?: ProjectTarget;
 };
 
 type ThreadGoalUpdateOptions = {

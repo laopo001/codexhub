@@ -5,8 +5,6 @@ export type RegisterParentOptions = {
   localAuthToken?: string;
   parentUrl: string;
   parentAuthToken?: string;
-  machineId?: string;
-  name?: string;
   timeoutMs?: number;
 };
 
@@ -41,9 +39,7 @@ export const resolveRegisterParentTarget = (
 export const registerParent = async (options: RegisterParentOptions) => {
   const payload: ParentRegistrationConnectInput = {
     url: options.parentUrl,
-    ...(options.parentAuthToken !== undefined ? { authToken: options.parentAuthToken } : {}),
-    ...(options.machineId !== undefined ? { machineId: options.machineId } : {}),
-    ...(options.name !== undefined ? { name: options.name } : {})
+    ...(options.parentAuthToken !== undefined ? { authToken: options.parentAuthToken } : {})
   };
   const headers = new Headers({ "content-type": "application/json" });
   const localAuthToken = options.localAuthToken?.trim();

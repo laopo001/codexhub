@@ -10,7 +10,6 @@ import {
   writeCurrentSurfaceUiStateRaw
 } from "./appConfig.js";
 import {
-  apiJson,
   apiRouteJson,
   machineProjectLauncher,
   permissionProfileScopeKey,
@@ -21,8 +20,6 @@ import {
 import type { AppSelectors } from "./appSelectors.js";
 import type { AppState } from "./appState.js";
 import { apiRoutes } from "../shared/apiRoutes.js";
-import { CodexHubApiError } from "../shared/apiClient.js";
-import type { EmbeddedSurfacePayload, WebClientHeartbeatPayload } from "../shared/apiContract.js";
 import { embeddedSurfaceProtocolVersion } from "../shared/surfaceTypes.js";
 import {
   subagentDialogConversationThreads,
@@ -92,43 +89,16 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
     };
     const heartbeat = createWebClientHeartbeat({
       send: async () => {
-        let payload: WebClientHeartbeatPayload;
-        try {
-          payload = await apiRouteJson(apiRoutes.heartbeatWebClient, {
-            clientId,
-            ...(embeddedSurfaceId && embeddedSurfaceLeaseId ? {
-              embeddedSurface: {
-                surfaceId: embeddedSurfaceId,
-                leaseId: embeddedSurfaceLeaseId,
-                protocolVersion: embeddedSurfaceProtocolVersion
-              }
-            } : {})
-          });
-        } catch (error) {
-          // A running pre-WebClientHub authority can serve the newly built Web
-          // before the user explicitly applies the authority update. Keep that
-          // concrete old process alive from Web, without restoring host timers
-          // or retaining the legacy route in the new authority.
-          if (
-            !(error instanceof CodexHubApiError)
-            || error.status !== 404
-            || !embeddedSurfaceId
-            || !embeddedSurfaceLeaseId
-          ) throw error;
-          const legacy = await apiJson<EmbeddedSurfacePayload>(
-            `/api/embedded/surfaces/${encodeURIComponent(embeddedSurfaceId)}/heartbeat`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                leaseId: embeddedSurfaceLeaseId,
-                protocolVersion: embeddedSurfaceProtocolVersion
-              })
+        const payload = await apiRouteJson(apiRoutes.heartbeatWebClient, {
+          clientId,
+          ...(embeddedSurfaceId && embeddedSurfaceLeaseId ? {
+            embeddedSurface: {
+              surfaceId: embeddedSurfaceId,
+              leaseId: embeddedSurfaceLeaseId,
+              protocolVersion: embeddedSurfaceProtocolVersion
             }
-          );
-          if (!legacy.surface) throw new Error("Legacy embedded surface lease is no longer active.");
-          return;
-        }
+          } : {})
+        });
         if (payload.embeddedSurfaceLeaseActive === false) {
           throw new Error("Embedded surface lease is no longer active.");
         }

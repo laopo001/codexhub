@@ -35,9 +35,7 @@ test("config.yaml env values override inherited process values", () => {
   }, env);
   assert.deepEqual(env, {
     CODEX_HUB_HOST: "0.0.0.0",
-    CODEX_HUB_AUTHORITY_HOST: "0.0.0.0",
     CODEX_HUB_PORT: "8788",
-    CODEX_HUB_AUTHORITY_PORT: "8788",
     CODEX_HUB_EMPTY: "from-config"
   });
 });

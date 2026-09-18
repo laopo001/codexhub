@@ -51,8 +51,7 @@ SSH host/user 和容器是不同 authority，不应合并 identity。
 CLI、Node.js server、VSCode 和 Electron 是同一执行环境中该 authority 的入口，不按入口
 另建 local runtime。默认端口统一为 `28788`，WSL 为避免与 Windows 的 localhost 冲突使用
 `28789`。端口只用于发现服务；复用必须校验 authority identity、配置目录、认证和 surface
-协议，不能把“端口上有 HTTP 服务”当作同一个 authority。`CODEX_HUB_PORT` 是统一端口配置，
-旧 `CODEX_HUB_AUTHORITY_PORT` 仅作为兼容别名；显式远端连接不触发本机替代服务。
+协议，不能把“端口上有 HTTP 服务”当作同一个 authority。`CODEX_HUB_PORT` 是统一端口配置；显式远端连接不触发本机替代服务。
 
 后端向父机注册时，仅导出本机 local machine 的执行能力。子机后端拥有本机 runtime 的生命周期，
 父机与子机本地 UI 的请求都由子机后端执行；父机持有远程展示投影，不为这条连接另建 app-server

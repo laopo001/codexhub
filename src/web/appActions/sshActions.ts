@@ -148,9 +148,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     try {
       const payload = await apiRouteJson(apiRoutes.connectParentRegistration, {
         url: parsed.url,
-        authToken: parsed.authToken,
-        machineId: parentRegistrationDraft.machineId.trim() || undefined,
-        name: parentRegistrationDraft.name.trim() || undefined
+        authToken: parsed.authToken
       });
       ctx.setParentRegistration(payload.registration ?? { status: "idle" });
     } catch (error) {
@@ -166,7 +164,7 @@ export const createSshActions = (ctx: SshActionsContext): SshActions => {
     try {
       const payload = await apiRouteJson(apiRoutes.disconnectParentRegistration);
       ctx.setParentRegistration(payload.registration ?? { status: "idle" });
-      ctx.sidebarDraftStore.set("parentRegistrationDraft", { url: "", machineId: "", name: "" });
+      ctx.sidebarDraftStore.set("parentRegistrationDraft", { url: "" });
     } catch (error) {
       ctx.setParentRegistrationError(error instanceof Error ? error.message : String(error));
     } finally {

@@ -149,8 +149,6 @@ export const createLocalServerAutostartFixture = async (): Promise<LocalServerAu
   const baseEnv = () => {
     const env = { ...process.env };
     delete env.CODEX_HUB_SERVER_URL;
-    delete env.CODEX_HUB_AUTHORITY_HOST;
-    delete env.CODEX_HUB_AUTHORITY_PORT;
     return {
       ...env,
       CODEX_HUB_DATA_DIR: dataDir,

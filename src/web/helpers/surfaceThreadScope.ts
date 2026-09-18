@@ -1,10 +1,7 @@
 import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import { findProjectSource, type ProjectSource } from "../../shared/projectTypes.js";
 
-/** @deprecated Prefer the canonical shared ProjectTarget; retained as a Web-local compatibility alias. */
-export type SurfaceProjectTarget = ProjectTarget;
-
-export type SurfaceProject = SurfaceProjectTarget & {
+export type SurfaceProject = ProjectTarget & {
   source?: ProjectSource;
   sources?: ProjectSource[];
 };
@@ -12,12 +9,12 @@ export type SurfaceProject = SurfaceProjectTarget & {
 export type SurfaceThreadTarget = {
   machineId: string;
   workingDirectory?: string;
-  projectTarget?: SurfaceProjectTarget;
+  projectTarget?: ProjectTarget;
 };
 
 export const threadMatchesProjectTarget = (
-  target: SurfaceProjectTarget | undefined,
-  project: SurfaceProjectTarget | undefined
+  target: ProjectTarget | undefined,
+  project: ProjectTarget | undefined
 ) => Boolean(
   target
   && project
@@ -27,7 +24,7 @@ export const threadMatchesProjectTarget = (
 
 export const workspaceIncludesProjectTarget = (
   workspacePaths: ReadonlySet<string>,
-  target: SurfaceProjectTarget | undefined,
+  target: ProjectTarget | undefined,
   machineId?: string
 ) => Boolean(
   target

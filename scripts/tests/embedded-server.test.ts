@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import net from "node:net";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,7 +14,6 @@ import {
   authorityServicePort,
   authorityHostServicePort
 } from "../../src/shared/surfaceTypes.js";
-import { migrateLegacyEmbeddedAuthorityData } from "../../src/core/authorityPaths.js";
 
 test("VSCode authority ports match across desktop hosts and reserve WSL plus one", () => {
   assert.equal(authorityHostServicePort, 28_788);
@@ -30,37 +29,12 @@ test("VSCode authority ports match across desktop hosts and reserve WSL plus one
 });
 
 test("embedded clients can use an explicit authority port for isolated development", () => {
-  assert.equal(authorityServicePort({ CODEX_HUB_AUTHORITY_PORT: "30123" }, "linux"), 30_123);
+  assert.equal(authorityServicePort({ CODEX_HUB_PORT: "30123" }, "linux"), 30_123);
   assert.equal(authorityServicePort({ CODEX_HUB_PORT: "30124" }, "linux"), 30_124);
-  assert.equal(authorityServicePort({ CODEX_HUB_PORT: "30125", CODEX_HUB_AUTHORITY_PORT: "30125" }, "linux"), 30_125);
   assert.throws(
-    () => authorityServicePort({ CODEX_HUB_PORT: "30125", CODEX_HUB_AUTHORITY_PORT: "30126" }, "linux"),
-    /must match/
+    () => authorityServicePort({ CODEX_HUB_PORT: "not-a-port" }, "linux"),
+    /Invalid CODEX_HUB_PORT/
   );
-  assert.throws(
-    () => authorityServicePort({ CODEX_HUB_AUTHORITY_PORT: "not-a-port" }, "linux"),
-    /Invalid CODEX_HUB_AUTHORITY_PORT/
-  );
-});
-
-test("legacy VSCode authority data migrates without overwriting shared state", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-authority-migration."));
-  const legacyDir = path.join(root, "legacy");
-  const sharedDir = path.join(root, "shared");
-  try {
-    await mkdir(legacyDir, { recursive: true });
-    await writeFile(path.join(legacyDir, "config.yaml"), "version: 1\n");
-    await writeFile(path.join(legacyDir, "vscode-authority-id"), "authority-legacy\n");
-    assert.equal(await migrateLegacyEmbeddedAuthorityData(legacyDir, sharedDir), true);
-    assert.equal(await readFile(path.join(sharedDir, "config.yaml"), "utf8"), "version: 1\n");
-    assert.equal(await readFile(path.join(sharedDir, "vscode-authority-id"), "utf8"), "authority-legacy\n");
-
-    await writeFile(path.join(sharedDir, "config.yaml"), "version: 2\n");
-    assert.equal(await migrateLegacyEmbeddedAuthorityData(legacyDir, sharedDir), false);
-    assert.equal(await readFile(path.join(sharedDir, "config.yaml"), "utf8"), "version: 2\n");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 });
 
 test("stable embedded ports are deterministic and stay inside the named range", () => {

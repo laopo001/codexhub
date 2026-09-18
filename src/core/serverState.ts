@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { codexHubDataDirectory } from "./authorityPaths.js";
@@ -54,10 +53,10 @@ export class CodexhubServerState {
 
   static async load(options: { dataDir?: string; filePath?: string } = {}) {
     const filePath = configFilePath(options);
-    const result = await readConfigFileWithLegacyFallback(filePath, options);
+    const result = await readStateFile(filePath);
     const state = new CodexhubServerState(filePath, result.data);
-    state.lastSavedText = result.path !== filePath ? "" : result.needsRewrite ? result.rawText ?? "" : YAML.stringify(result.data);
-    if (result.needsRewrite || result.path !== filePath) await state.save();
+    state.lastSavedText = result.needsRewrite ? result.rawText ?? "" : YAML.stringify(result.data);
+    if (result.needsRewrite) await state.save();
     return state;
   }
 
@@ -692,26 +691,12 @@ export const machineIdForSession = (session: Pick<SessionSummary, "machineId" | 
 
 const defaultDataDir = () => codexHubDataDirectory();
 
-const legacyDefaultDataDir = () =>
-  path.resolve(path.join(os.homedir(), ".local", "share", "codexhub"));
-
 const configFileName = "config.yaml";
-const legacyStateFileName = "server-state.yaml";
 
 const configFilePath = (options: { dataDir?: string; filePath?: string }) =>
   options.filePath
     ? path.resolve(options.filePath)
     : path.join(options.dataDir ? path.resolve(options.dataDir) : defaultDataDir(), configFileName);
-
-const legacyConfigFilePaths = (options: { dataDir?: string; filePath?: string }, preferredPath: string) => {
-  if (options.filePath) return [];
-  const dataDir = options.dataDir ? path.resolve(options.dataDir) : defaultDataDir();
-  const paths = [path.join(dataDir, legacyStateFileName)];
-  if (!options.dataDir && !process.env.CODEX_HUB_DATA_DIR) {
-    paths.push(path.join(legacyDefaultDataDir(), legacyStateFileName));
-  }
-  return [...new Set(paths.map((item) => path.resolve(item)).filter((item) => item !== preferredPath))];
-};
 
 type StateFileReadResult = {
   found: boolean;
@@ -719,19 +704,6 @@ type StateFileReadResult = {
   data: ServerStateData;
   needsRewrite: boolean;
   rawText?: string;
-};
-
-const readConfigFileWithLegacyFallback = async (
-  preferredPath: string,
-  options: { dataDir?: string; filePath?: string }
-): Promise<StateFileReadResult> => {
-  const preferred = await readStateFile(preferredPath);
-  if (preferred.found) return preferred;
-  for (const legacyPath of legacyConfigFilePaths(options, preferredPath)) {
-    const legacy = await readStateFile(legacyPath);
-    if (legacy.found) return legacy;
-  }
-  return preferred;
 };
 
 const readStateFile = async (filePath: string): Promise<StateFileReadResult> => {

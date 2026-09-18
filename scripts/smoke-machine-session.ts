@@ -1554,32 +1554,8 @@ const assertServerStateSnapshotPure = async () => {
 };
 
 const assertServerStateDoesNotPersistThreadHistory = async () => {
-  const legacyDataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-thread-history-legacy."));
-  await writeFile(path.join(legacyDataDir, "server-state.yaml"), [
-    "version: 1",
-    "updatedAt: 2026-01-01T00:00:00.000Z",
-    "machines: []",
-    "projects: []",
-    "threads:",
-    "  - threadId: legacy-thread",
-    "    projectId: legacy-project",
-    "    title: legacy",
-    "    updatedAt: 2026-01-01T00:00:00.000Z",
-    "    status: idle",
-    "    messageCount: 1",
-    "tasks: []",
-    "sshHosts: []",
-    ""
-  ].join("\n"), "utf8");
-  const { CodexhubServerState } = await import("../src/core/serverState.js");
-  const legacyState = await CodexhubServerState.load({ dataDir: legacyDataDir });
-  if (legacyState.path !== path.join(legacyDataDir, "config.yaml")) {
-    throw new Error(`legacy config should migrate to config.yaml, got ${legacyState.path}`);
-  }
-  const migrated = await readFile(legacyState.path, "utf8");
-  if (migrated.includes("\nthreads:")) throw new Error(`legacy thread history was not migrated out:\n${migrated}`);
-
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codexhub-smoke-state-thread-history."));
+  const { CodexhubServerState } = await import("../src/core/serverState.js");
   const state = await CodexhubServerState.load({ dataDir });
   const machineId = "machine-thread-history-smoke";
   const projectPath = "/tmp/codexhub-thread-history-smoke";

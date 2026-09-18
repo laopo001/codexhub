@@ -13,7 +13,7 @@ export type CodexhubInvocation = {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CODEXHUB_EXECUTABLES = new Set(["codexhub", "cxh", "codexhub.cmd", "cxh.cmd"]);
 const SHELL_EXECUTABLES = new Set(["ash", "bash", "dash", "fish", "ksh", "sh", "zsh"]);
-const VALUE_OPTIONS = new Set(["--connect", "--cwd", "--effort", "--machine", "--model", "--name", "--server", "--timeout"]);
+const VALUE_OPTIONS = new Set(["--connect", "--cwd", "--effort", "--machine", "--model", "--name", "--timeout"]);
 // `--stream` is retired from the CLI. Keep it only for historical tool-record
 // parsing so old shell records remain inspectable in the Web UI.
 const FLAG_OPTIONS = new Set(["--json", "--no-wait", "--stream", "--wait"]);
@@ -118,14 +118,14 @@ function parseInvocationArguments(args: string[], heredocInput?: string): Codexh
     if (!optionsEnded && token.startsWith("--")) {
       const option = readOption(args, index);
       if (!option || seenOptions.has(option.name)) return null;
-      if (!operation && option.name !== "--connect" && option.name !== "--server") return null;
+      if (!operation && option.name !== "--connect") return null;
       if (operation && !optionAllowedForOperation(operation, option.name)) return null;
       if ((option.name === "--wait" && seenOptions.has("--no-wait")) ||
         (option.name === "--no-wait" && seenOptions.has("--wait"))) return null;
       seenOptions.add(option.name);
       index = option.nextIndex;
 
-      if (option.name === "--connect" || option.name === "--server") {
+      if (option.name === "--connect") {
         if (connectUrl !== undefined) return null;
         connectUrl = option.value;
       } else if (option.name === "--name") {
@@ -205,7 +205,7 @@ function optionalInvocation(operation: CodexhubInvocation["operation"], values: 
 }
 
 function optionAllowedForOperation(operation: CodexhubInvocation["operation"], option: string): boolean {
-  if (option === "--connect" || option === "--server") return true;
+  if (option === "--connect") return true;
   if (option === "--timeout" || option === "--json") return true;
   if (operation === "stop" || operation === "end") return false;
   if (option === "--cwd" || option === "--machine" || option === "--model" || option === "--effort") return true;

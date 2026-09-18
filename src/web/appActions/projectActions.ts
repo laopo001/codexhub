@@ -3,6 +3,7 @@ import type { OpenThreadPresence } from "../../shared/apiContract.js";
 import type React from "react";
 import { Modal } from "antd";
 import type { ProjectUpdateInput } from "../../shared/apiContract.js";
+import type { ProjectTarget } from "../../shared/petActivityRouting.js";
 import { apiRoutes } from "../../shared/apiRoutes.js";
 import { isEmbeddedSurfaceKind } from "../../shared/surfaceTypes.js";
 import { isFixedWorkspaceSurface } from "../appConfig.js";
@@ -27,7 +28,6 @@ import { resolveSubagentThreadTarget } from "../helpers/subagentThreads.js";
 import { releaseDialogOnlyThreadAttachments } from "../helpers/subagentThreadDialog.js";
 import { openThreadStateFromDetail } from "../openThreadReducer.js";
 import type { OpenThreadOptions } from "./threadActions.js";
-import type { SurfaceProjectTarget } from "../helpers/surfaceThreadScope.js";
 import type {
   OpenThreadState,
   CodexThreadCandidate,
@@ -91,7 +91,7 @@ export type ProjectActionsDependencies = {
 type ActivateMachineThreadOptions = {
   preferredWorkingDirectory?: string;
   initialThread?: ThreadDetail;
-  projectTarget?: SurfaceProjectTarget;
+  projectTarget?: ProjectTarget;
 };
 
 type StartProjectThreadOptions = {
@@ -316,7 +316,7 @@ export const createProjectActions = (ctx: ProjectActionsContext, deps: ProjectAc
     runtime: RuntimeSummary,
     workingDirectory = runtime.workingDirectory,
     bootstrapId?: string,
-    projectTarget?: SurfaceProjectTarget
+    projectTarget?: ProjectTarget
   ) => {
     if (!bootstrapId) {
       ctx.setActiveMachineId(runtime.machineId);
