@@ -197,13 +197,18 @@ const requestRestart = async (
   requestedBuildId?: string
 ) => {
   try {
-    const buildId = requestedBuildId?.trim() || input.buildId?.trim() || "";
+    // A missing build id is the explicit manual-restart path. It must restart
+    // the files currently on disk even when the running generation is stale.
+    // An explicit build id is reserved for update/deployment handoffs and
+    // remains subject to the strict fingerprint check below.
+    const explicitBuildId = requestedBuildId?.trim();
+    const actualBuildId = await authorityBuildId(input.authorityBuildFiles, buildIdPrefix(input.buildId));
+    const buildId = explicitBuildId || actualBuildId;
     if (!buildId) throw new Error("No verified successor build is available.");
     if (!/^[^:\s]+:\d+:[a-f0-9]{20}$/i.test(buildId)) {
       throw new Error(`Invalid successor build id: ${buildId}`);
     }
-    const actualBuildId = await authorityBuildId(input.authorityBuildFiles);
-    if (buildFingerprint(actualBuildId) !== buildFingerprint(buildId)) {
+    if (explicitBuildId && buildFingerprint(actualBuildId) !== buildFingerprint(buildId)) {
       throw new Error(`Successor build is not present or is incomplete: expected ${buildId}, found ${actualBuildId}.`);
     }
     await validateRestartLaunchSpec({ ...input, buildId, oldServerInstanceId: input.serverInstanceId });
@@ -241,6 +246,11 @@ const requestRestart = async (
 };
 
 const buildFingerprint = (buildId: string) => buildId.split(":").slice(-2).join(":");
+
+const buildIdPrefix = (buildId: string | null | undefined) => {
+  const prefix = buildId?.split(":", 1)[0]?.trim();
+  return prefix || "authority";
+};
 
 const validateRestartLaunchSpec = async (input: AuthorityRestartCoordinatorInput & { buildId: string; oldServerInstanceId: string }) => {
   if (!input.authorityId.startsWith("authority-")) throw new Error("Invalid authority id in restart spec.");

@@ -8,6 +8,7 @@ import {
   createAuthorityRestartCoordinator,
   parseAuthorityRestartHandoff,
   runAuthorityRestartSupervisor,
+  type AuthorityRestartLaunchSpec,
   type AuthorityRestartHandoff,
   shouldStopOwnedAuthorityProcess
 } from "../../src/core/embeddedAuthority.js";
@@ -96,7 +97,7 @@ test("malformed restart handoffs are rejected and deleted without token leakage"
   }
 });
 
-test("successful restart requests share one supervisor forever", async () => {
+test("manual restart uses current files and shares one supervisor forever", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codexhub-restart-success."));
   const servicePath = path.join(root, "authority-service.cjs");
   const staticDirectory = path.join(root, "dist");
@@ -104,13 +105,16 @@ test("successful restart requests share one supervisor forever", async () => {
   await writeFile(servicePath, "service");
   await writeFile(path.join(staticDirectory, "index.html"), "index");
   let supervisors = 0;
+  let requestedBuildId = "";
+  const currentBuildId = await authorityBuildId([servicePath, path.join(staticDirectory, "index.html")], "npm");
   const input = {
     servicePath, staticDirectory, dataDir: root, authorityId: "authority-restart-test", authorityKind: "linux" as const,
     host: "127.0.0.1", port: 43124, projectCatalog: "fixed" as const,
-    buildId: await authorityBuildId([servicePath, path.join(staticDirectory, "index.html")]),
+    buildId: "npm:1:00000000000000000000",
     protocolVersion: embeddedSurfaceProtocolVersion, nodeCommand: process.execPath, nodeSource: "host-fallback" as const,
     authRequired: false, oldPid: process.pid, serverInstanceId: "old-instance", authorityBuildFiles: [servicePath, path.join(staticDirectory, "index.html")],
-    authToken: "", onClose: () => undefined, spawnSupervisor: async () => { supervisors += 1; }
+    authToken: "", onClose: () => undefined,
+    spawnSupervisor: async (spec: AuthorityRestartLaunchSpec) => { supervisors += 1; requestedBuildId = spec.buildId; }
   };
   try {
     const coordinator = createAuthorityRestartCoordinator(input);
@@ -119,6 +123,7 @@ test("successful restart requests share one supervisor forever", async () => {
     assert.deepEqual(await first, { ok: true, restarting: true });
     assert.deepEqual(await second, { ok: true, restarting: true });
     assert.equal(supervisors, 1);
+    assert.equal(requestedBuildId, currentBuildId);
     assert.deepEqual(await coordinator.request(), { ok: true, restarting: true });
     assert.equal(supervisors, 1);
   } finally {
