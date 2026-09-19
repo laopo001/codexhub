@@ -25,11 +25,35 @@ test("authority open threads deduplicate windows and retain a tab until its last
   unsubscribe();
 });
 
+test("authority presence keeps the newest open time for a shared thread", () => {
+  const hub = new OpenThreadPresenceHub();
+  const firstWindow = {};
+  const secondWindow = {};
+  const older = {
+    threadId: "thread",
+    machineId: "machine",
+    workingDirectory: "/older",
+    lastOpenedAt: "2026-09-02T00:01:00.000Z"
+  };
+  const newer = {
+    threadId: "thread",
+    machineId: "machine",
+    workingDirectory: "/newer",
+    lastOpenedAt: "2026-09-02T00:02:00.000Z"
+  };
+
+  hub.set(firstWindow, [newer]);
+  hub.set(secondWindow, [older]);
+
+  assert.deepEqual(hub.list(), [newer]);
+});
+
 test("open thread presence rejects cross-machine project targets and non-public fields", () => {
   const entry = { machineId: "ssh", threadId: "a", workingDirectory: "/workspace" };
   assert.equal(webEventsMessageSchema.safeParse({ type: "set_open_threads", threads: [entry] }).success, true);
   assert.equal(webEventsMessageSchema.safeParse({ type: "set_open_threads", threads: [{ ...entry, projectTarget: { machineId: "local", path: "/workspace" } }] }).success, false);
   assert.equal(webEventsMessageSchema.safeParse({ type: "set_open_threads", threads: [{ ...entry, sessionId: "internal" }] }).success, false);
+  assert.equal(webEventsMessageSchema.safeParse({ type: "set_open_threads", threads: [{ ...entry, lastOpenedAt: "2026-09-02T00:02:00.000Z" }] }).success, true);
 });
 
 test("WebSocket control plane broadcasts exact open sets across windows and removes only the closed owner", async () => {

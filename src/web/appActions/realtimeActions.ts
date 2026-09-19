@@ -349,6 +349,7 @@ export const createRealtimeActions = (ctx: RealtimeActionsContext, deps: Realtim
               ...(target.workingDirectory
                 ? { preferredWorkingDirectory: target.workingDirectory }
                 : {}),
+              ...(target.lastOpenedAt ? { lastOpenedAt: target.lastOpenedAt } : {}),
               ...(target.projectTarget ? { projectTarget: target.projectTarget } : {})
             } : {})
           });

@@ -518,6 +518,7 @@ export const openThreadPresenceSchema = z.object({
   machineId: z.string().min(1),
   workingDirectory: z.string(),
   title: z.string().optional(),
+  lastOpenedAt: z.string().min(1).optional(),
   projectTarget: z.object({ machineId: z.string().min(1), path: z.string().min(1) }).strict().optional()
 }).strict().refine((value) => !value.projectTarget || value.projectTarget.machineId === value.machineId, {
   message: "Open thread project target must belong to the same machine"

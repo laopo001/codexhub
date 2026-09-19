@@ -9,6 +9,7 @@ export type SurfaceProject = ProjectTarget & {
 export type SurfaceThreadTarget = {
   machineId: string;
   workingDirectory?: string;
+  lastOpenedAt?: string;
   projectTarget?: ProjectTarget;
 };
 

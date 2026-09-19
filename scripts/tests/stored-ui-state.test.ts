@@ -60,6 +60,7 @@ test("v1 exact tab snapshot remains compatible and parses optional project origi
       "open-thread": {
         machineId: "machine",
         workingDirectory: "/workspace-root",
+        lastOpenedAt: "2026-09-02T00:02:00.000Z",
         projectTarget: { machineId: "machine", path: "/repo" }
       }
     }
@@ -72,6 +73,7 @@ test("v1 exact tab snapshot remains compatible and parses optional project origi
     "open-thread": {
       machineId: "machine",
       workingDirectory: "/workspace-root",
+      lastOpenedAt: "2026-09-02T00:02:00.000Z",
       projectTarget: { machineId: "machine", path: "/repo" }
     }
   });

@@ -75,6 +75,7 @@ export const openThreadStateFromDetail = (
   recordVersion: existing
     ? existing.records === thread.records ? existing.recordVersion : (existing.recordVersion ?? 0) + 1
     : 0,
+  ...(existing?.lastOpenedAt ? { lastOpenedAt: existing.lastOpenedAt } : {}),
   ...((thread.developerInstruction ?? existing?.developerInstruction)
     ? { developerInstruction: thread.developerInstruction ?? existing?.developerInstruction }
     : {}),

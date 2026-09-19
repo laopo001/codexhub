@@ -299,9 +299,9 @@
 }
 
 .openThreadSidebarMachine {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   min-width: 0;
   color: #748574;
@@ -312,6 +312,12 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.openThreadSidebarOpenedAt {
+  color: #8b9d89;
+  font-size: 9px;
   white-space: nowrap;
 }
 

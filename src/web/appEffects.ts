@@ -47,6 +47,7 @@ type AppEffectsActions = {
     preferredWorkingDirectory?: string;
     activate?: boolean;
     deferActivationUntilLoaded?: boolean;
+    lastOpenedAt?: string;
   }) => Promise<void>;
   stopTurn: (threadId: string) => unknown;
   syncThreadSubscriptions: (threadIds: string[]) => void;
@@ -242,7 +243,8 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
         ...(state.threadProjectTargets[thread.threadId]
           ? { projectTarget: state.threadProjectTargets[thread.threadId] }
           : {}),
-        ...(thread.workingDirectory ? { workingDirectory: thread.workingDirectory } : {})
+        ...(thread.workingDirectory ? { workingDirectory: thread.workingDirectory } : {}),
+        ...(thread.lastOpenedAt ? { lastOpenedAt: thread.lastOpenedAt } : {})
       } satisfies SurfaceThreadTarget]] : [];
     }));
     const persistedOpenThreadIds = candidateOpenThreadIds;
@@ -516,6 +518,7 @@ export const useAppEffects = ({ actions, selectors, state }: AppEffectsInput) =>
       machineId,
       workingDirectory: thread.workingDirectory,
       ...(thread.title ? { title: thread.title } : {}),
+      ...(thread.lastOpenedAt ? { lastOpenedAt: thread.lastOpenedAt } : {}),
       ...(projectTarget?.machineId === machineId ? { projectTarget } : {})
     }];
   }));

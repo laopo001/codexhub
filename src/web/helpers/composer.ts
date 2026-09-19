@@ -566,6 +566,7 @@ const storedStringArrayRecord = (value: unknown) => {
 export type PersistedOpenThreadTarget = {
   machineId: string;
   workingDirectory?: string;
+  lastOpenedAt?: string;
   projectTarget?: ProjectTarget;
 };
 
@@ -579,6 +580,9 @@ const storedOpenThreadTargets = (value: unknown) => {
     const workingDirectory = typeof record.workingDirectory === "string"
       ? record.workingDirectory.trim()
       : "";
+    const lastOpenedAt = typeof record.lastOpenedAt === "string"
+      ? record.lastOpenedAt.trim()
+      : "";
     const projectRecord = record.projectTarget as Record<string, unknown> | undefined;
     const projectTarget = projectRecord && typeof projectRecord === "object" && !Array.isArray(projectRecord)
       ? {
@@ -589,12 +593,14 @@ const storedOpenThreadTargets = (value: unknown) => {
     if (!projectTarget?.machineId || !projectTarget.path || projectTarget.machineId !== machineId) {
       return [[threadId, {
         machineId,
-        ...(workingDirectory ? { workingDirectory } : {})
+        ...(workingDirectory ? { workingDirectory } : {}),
+        ...(lastOpenedAt ? { lastOpenedAt } : {})
       }] as const];
     }
     return [[threadId, {
       machineId,
       ...(workingDirectory ? { workingDirectory } : {}),
+      ...(lastOpenedAt ? { lastOpenedAt } : {}),
       projectTarget
     }] as const];
   });

@@ -18,9 +18,13 @@ export class OpenThreadPresenceHub {
   list(): OpenThreadPresence[] {
     const threads = new Map<string, OpenThreadPresence>();
     for (const window of this.windows.values()) {
-      for (const thread of window) threads.set(JSON.stringify([thread.machineId, thread.threadId]), thread);
+      for (const thread of window) {
+        const key = JSON.stringify([thread.machineId, thread.threadId]);
+        const current = threads.get(key);
+        if (!current || openedAt(thread) > openedAt(current)) threads.set(key, thread);
+      }
     }
-    return [...threads.values()];
+    return [...threads.values()].sort((left, right) => openedAt(right) - openedAt(left));
   }
 
   subscribe(listener: (threads: OpenThreadPresence[]) => void) {
@@ -34,3 +38,9 @@ export class OpenThreadPresenceHub {
     for (const listener of this.listeners) listener(threads);
   }
 }
+
+const openedAt = (thread: Pick<OpenThreadPresence, "lastOpenedAt">) => {
+  if (!thread.lastOpenedAt) return 0;
+  const timestamp = Date.parse(thread.lastOpenedAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};

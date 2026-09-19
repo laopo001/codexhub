@@ -164,6 +164,8 @@ export type ProjectsPayload = ApiProjectsPayload;
 export type OpenThreadState = ThreadDetail & {
   /** Monotonic Web-only version for live record deltas on a shared array. */
   recordVersion?: number;
+  /** Browser UI metadata for ordering the authority-wide open-thread list. */
+  lastOpenedAt?: string;
   composerMode: ComposerMode;
   modelDraft: ModelSelection;
   reasoningDraft: ReasoningSelection;

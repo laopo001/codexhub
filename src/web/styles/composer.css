@@ -92,7 +92,7 @@
 .openThreadTabLabel {
   display: grid;
   gap: 2px;
-  width: clamp(112px, 18cqw, 180px);
+  width: clamp(112px, 16cqw, 160px);
   min-width: 0;
   cursor: pointer;
   line-height: 1.14;
@@ -165,6 +165,7 @@
   color: #17211a;
   font-size: 12px;
   font-weight: 700;
+  text-align: center;
 }
 
 .hasDeveloperInstruction .openThreadTabTitle {

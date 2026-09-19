@@ -8,9 +8,11 @@ export const mergeThreadRestoreTarget = (
   saved: SurfaceThreadTarget | undefined
 ) => {
   if (!loaded) return saved;
-  return saved?.projectTarget?.machineId === loaded.machineId
-    ? { ...loaded, projectTarget: saved.projectTarget }
-    : loaded;
+  return {
+    ...loaded,
+    ...(saved?.lastOpenedAt ? { lastOpenedAt: saved.lastOpenedAt } : {}),
+    ...(saved?.projectTarget?.machineId === loaded.machineId ? { projectTarget: saved.projectTarget } : {})
+  };
 };
 
 export const selectPendingThreadRestoreTargets = (
@@ -38,6 +40,7 @@ export const pendingThreadRestoreOpenOptions = (input: {
     ...(activate ? { deferActivationUntilLoaded: true } : { activate: false as const }),
     ...(target?.machineId ? { expectedMachineId: target.machineId } : {}),
     ...(target?.workingDirectory ? { preferredWorkingDirectory: target.workingDirectory } : {}),
+    ...(target?.lastOpenedAt ? { lastOpenedAt: target.lastOpenedAt } : {}),
     ...(projectTarget ? { projectTarget } : {})
   };
 };

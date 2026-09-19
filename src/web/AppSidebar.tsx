@@ -30,6 +30,8 @@ import {
   uniqueMachines
 } from "./appHelpers.js";
 import { writeTextToClipboard } from "./helpers/composer.js";
+import { formatDate } from "./helpers/common.js";
+import { relativeTime } from "./helpers/core.js";
 import { sidebarOpenThreadItems } from "./helpers/sidebarOpenThreads.js";
 
 type AppSidebarProps = {
@@ -345,6 +347,12 @@ export const AppSidebar = ({ viewModel }: AppSidebarProps) => {
                   <code className="openThreadSidebarPath">{thread.workingDirectory}</code>
                   <span className="openThreadSidebarMachine">
                     <span title={machineLabel}>{machineLabel}</span>
+                    <span
+                      className="openThreadSidebarOpenedAt"
+                      title={thread.lastOpenedAt ? `Last opened ${formatDate(thread.lastOpenedAt)}` : "Last opened time unavailable"}
+                    >
+                      {thread.lastOpenedAt ? `Opened ${relativeTime(thread.lastOpenedAt)}` : "Opened time unavailable"}
+                    </span>
                     <strong className={machineType ?? "unknown"}>{machineType ?? "machine"}</strong>
                   </span>
                 </button>

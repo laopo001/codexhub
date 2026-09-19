@@ -81,3 +81,25 @@ test("sidebar includes other windows across machines without opening their tabs 
   assert.equal(disconnected.length, 3);
   assert.equal(disconnected[1].machineLabel, "machine-ssh");
 });
+
+test("sidebar sorts open threads by their latest opened time", () => {
+  const entries = [
+    {
+      threadId: "thread-old",
+      machineId: "machine-local",
+      workingDirectory: "/old",
+      lastOpenedAt: "2026-09-02T00:01:00.000Z"
+    },
+    {
+      threadId: "thread-new",
+      machineId: "machine-local",
+      workingDirectory: "/new",
+      lastOpenedAt: "2026-09-02T00:02:00.000Z"
+    }
+  ];
+
+  const items = sidebarOpenThreadItems([], [machine("machine-local", "local")], entries);
+
+  assert.deepEqual(items.map((item) => item.thread.threadId), ["thread-new", "thread-old"]);
+  assert.equal(items[0]?.thread.lastOpenedAt, "2026-09-02T00:02:00.000Z");
+});
