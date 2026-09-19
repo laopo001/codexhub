@@ -9,6 +9,12 @@ interface Window {
       height: number;
     }>) => void;
     setPetDragActive: (active: boolean) => void;
+    getDisplayBounds?: () => Promise<ReadonlyArray<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>>;
     openPetActivity: (target: {
       threadId: string;
       workingDirectory?: string;

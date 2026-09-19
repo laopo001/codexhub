@@ -29,11 +29,45 @@ export const defaultPetPosition = (viewport: PetSize, compact: boolean): PetPosi
 };
 
 export type PetTrayHorizontalAlignment = "center" | "left" | "right";
+export type PetTrayVerticalAlignment = "above" | "below";
+
+export type PetDisplayBounds = PetPosition & PetSize;
 
 export type PetTrayLayout = {
   horizontal: PetTrayHorizontalAlignment;
+  vertical: PetTrayVerticalAlignment;
   offsetLeft: number;
   width: number;
+};
+
+const displayDistanceToPoint = (display: PetDisplayBounds, point: PetPosition) => {
+  const right = display.x + display.width;
+  const bottom = display.y + display.height;
+  const dx = point.x < display.x ? display.x - point.x : point.x > right ? point.x - right : 0;
+  const dy = point.y < display.y ? display.y - point.y : point.y > bottom ? point.y - bottom : 0;
+  return dx * dx + dy * dy;
+};
+
+const displayForPet = (
+  petPosition: PetPosition,
+  petSize: PetSize,
+  displays: ReadonlyArray<PetDisplayBounds>
+): PetDisplayBounds | null => {
+  if (!displays.length) return null;
+  const petCenter = {
+    x: petPosition.x + petSize.width / 2,
+    y: petPosition.y + petSize.height / 2,
+  };
+  return displays.find((display) =>
+    petCenter.x >= display.x
+    && petCenter.x <= display.x + display.width
+    && petCenter.y >= display.y
+    && petCenter.y <= display.y + display.height
+  ) ?? displays.reduce((nearest, display) =>
+    displayDistanceToPoint(display, petCenter) < displayDistanceToPoint(nearest, petCenter)
+      ? display
+      : nearest
+  );
 };
 
 export const calculatePetTrayLayout = (
@@ -41,24 +75,29 @@ export const calculatePetTrayLayout = (
   viewport: PetSize,
   petSize: PetSize,
   preferredWidth = 310,
-  viewportMargin = 12
+  viewportMargin = 12,
+  displays: ReadonlyArray<PetDisplayBounds> = []
 ): PetTrayLayout => {
-  const width = Math.min(preferredWidth, Math.max(0, viewport.width - 32));
+  const display = displayForPet(petPosition, petSize, displays);
+  const trayViewport = display ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
+  const width = Math.min(preferredWidth, Math.max(0, trayViewport.width - 32));
   const petCenterX = petPosition.x + petSize.width / 2;
   const idealLeft = petCenterX - width / 2;
-  const margin = Math.min(viewportMargin, Math.max(0, (viewport.width - width) / 2));
-  const maxLeft = Math.max(margin, viewport.width - width - margin);
-  const clampedLeft = Math.max(margin, Math.min(maxLeft, idealLeft));
+  const margin = Math.min(viewportMargin, Math.max(0, (trayViewport.width - width) / 2));
+  const minLeft = trayViewport.x + margin;
+  const maxLeft = Math.max(minLeft, trayViewport.x + trayViewport.width - width - margin);
+  const clampedLeft = Math.max(minLeft, Math.min(maxLeft, idealLeft));
   const offsetLeft = Math.round(clampedLeft - petPosition.x);
   const horizontal: PetTrayHorizontalAlignment = clampedLeft === idealLeft
     ? "center"
     : clampedLeft > idealLeft
       ? "left"
       : "right";
+  const petCenterY = petPosition.y + petSize.height / 2;
   return {
     horizontal,
+    vertical: petCenterY > trayViewport.y + trayViewport.height / 2 ? "above" : "below",
     offsetLeft,
     width,
   };
 };
-

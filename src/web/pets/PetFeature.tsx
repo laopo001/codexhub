@@ -18,6 +18,7 @@ import {
   calculatePetTrayLayout,
   clampPetPosition,
   defaultPetPosition,
+  type PetDisplayBounds,
   type PetPosition,
   type PetSize,
 } from "./petMotion.js";
@@ -212,6 +213,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
   const [viewport, setViewport] = React.useState(viewportSize);
   const [position, setPosition] = React.useState(initialPosition);
   const positionRef = React.useRef(position);
+  const [desktopDisplayBounds, setDesktopDisplayBounds] = React.useState<ReadonlyArray<PetDisplayBounds>>([]);
   const [dragDirection, setDragDirection] = React.useState<PetDragDirection>(null);
   const [lookCell, setLookCell] = React.useState<PetLookCell | null>(null);
 
@@ -224,6 +226,29 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
     if (!controller.position) return;
     updateRenderedPosition(clampPetPosition(controller.position, viewportSize(), petSizeForViewport()));
   }, [controller.position?.x, controller.position?.y, updateRenderedPosition]);
+
+  React.useEffect(() => {
+    if (!desktopPetWindow) {
+      setDesktopDisplayBounds([]);
+      return undefined;
+    }
+    let active = true;
+    const refreshDisplayBounds = () => {
+      const getDisplayBounds = window.codexhubElectronPet?.getDisplayBounds;
+      if (!getDisplayBounds) return;
+      void getDisplayBounds().then((bounds) => {
+        if (active) setDesktopDisplayBounds(bounds);
+      }).catch(() => {
+        // The tray keeps using the full renderer viewport if the host bridge is unavailable.
+      });
+    };
+    refreshDisplayBounds();
+    window.addEventListener("resize", refreshDisplayBounds);
+    return () => {
+      active = false;
+      window.removeEventListener("resize", refreshDisplayBounds);
+    };
+  }, [desktopPetWindow]);
 
   React.useEffect(() => {
     const handleResize = () => {
@@ -394,8 +419,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
   if (!controller.enabled) return null;
   const activeActivities = controller.activities.filter((activity) => activity.status !== "idle");
   const petSize = petSizeForViewport();
-  const trayVertical = position.y + petSize.height / 2 > viewport.height / 2 ? "above" : "below";
-  const trayLayout = calculatePetTrayLayout(position, viewport, petSize);
+  const trayLayout = calculatePetTrayLayout(position, viewport, petSize, 310, 12, desktopDisplayBounds);
   const openActivity = (activity: PetActivity) => {
     if (desktopPetWindow) {
       window.codexhubElectronPet?.openPetActivity?.({
@@ -420,7 +444,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
       data-dragging={dragDirection ? "true" : "false"}
       data-status={controller.status}
       data-tray-horizontal={trayLayout.horizontal}
-      data-tray-vertical={trayVertical}
+      data-tray-vertical={trayLayout.vertical}
       style={{ left: position.x, top: position.y }}
       aria-live="polite"
     >
@@ -428,7 +452,7 @@ export const PetOverlay = ({ composerRecentlyChanged, controller, desktopPetWind
         <section
           className="petActivityTray"
           aria-label="Codex activity"
-          style={{ left: trayLayout.offsetLeft }}
+          style={{ left: trayLayout.offsetLeft, width: trayLayout.width }}
         >
           <header>
             <div>

@@ -45,7 +45,8 @@ import {
   parsePetHitRegions,
   petHitRegionsContainScreenPoint,
   shouldDesktopPetBeInteractive,
-  type PetHitRegion
+  type PetHitRegion,
+  type ScreenDisplayBounds
 } from "../../../src/shared/petInput.js";
 import { embeddedSurfaceProtocolVersion } from "../../../src/shared/surfaceTypes.js";
 import {
@@ -233,6 +234,16 @@ const desktopPetBounds = () => {
   );
 };
 
+const desktopPetDisplayBounds = (): ScreenDisplayBounds[] => {
+  const windowBounds = desktopPetBounds();
+  return screen.getAllDisplays().map((display) => ({
+    x: display.bounds.x - windowBounds.x,
+    y: display.bounds.y - windowBounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
+  }));
+};
+
 const ensureDesktopPetAlwaysOnTop = (petWindow: BrowserWindow | null = desktopPetWindow) => {
   if (!petWindow || petWindow.isDestroyed()) return;
   // Use the highest available level to stay above floating and topmost windows (e.g. QQ, notifications).
@@ -407,6 +418,12 @@ ipcMain.on("codexhub:pet-drag-active", (event, active: unknown) => {
   if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return;
   desktopPetDragActive = Boolean(active);
   updateDesktopPetInputMode(true);
+});
+
+ipcMain.handle("codexhub:pet-display-bounds", (event) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || sender !== desktopPetWindow || sender.isDestroyed()) return [];
+  return desktopPetDisplayBounds();
 });
 
 const launchVsCodeTarget = (plan: { command: string; args: string[] }) => {

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { PetActivityOpenTarget } from "../../../src/shared/petActivityRouting.js";
-import type { PetHitRegion } from "../../../src/shared/petInput.js";
+import type { PetHitRegion, ScreenDisplayBounds } from "../../../src/shared/petInput.js";
 import type { TaskCompleteNotification } from "../../../src/shared/taskNotifications.js";
 
 contextBridge.exposeInMainWorld("codexhubElectronPet", {
@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("codexhubElectronPet", {
   setPetDragActive: (active: boolean) => {
     ipcRenderer.send("codexhub:pet-drag-active", Boolean(active));
   },
+  getDisplayBounds: () => ipcRenderer.invoke("codexhub:pet-display-bounds") as Promise<ReadonlyArray<ScreenDisplayBounds>>,
   openPetActivity: (target: PetActivityOpenTarget) => {
     ipcRenderer.send("codexhub:pet-open-activity", target);
   },

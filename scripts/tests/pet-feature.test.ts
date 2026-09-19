@@ -782,6 +782,27 @@ test("calculatePetTrayLayout centers the tray under the pet and clamps at viewpo
   assert.equal(narrowLayout.width, 268);
 });
 
+test("desktop pet tray stays within the display containing the pet", () => {
+  const displays = [
+    { x: 0, y: 0, width: 1920, height: 1080 },
+    { x: 1920, y: 0, width: 2560, height: 1440 },
+  ];
+  const petSize = { width: 126, height: 136 };
+  const petPosition = { x: 1790, y: 300 };
+  const layout = calculatePetTrayLayout(
+    petPosition,
+    { width: 4480, height: 1440 },
+    petSize,
+    310,
+    12,
+    displays
+  );
+
+  assert.equal(layout.horizontal, "right");
+  assert.equal(layout.vertical, "below");
+  assert.equal(petPosition.x + layout.offsetLeft + layout.width, 1908);
+});
+
 test("pet activity tray renders centered with inline offset", async () => {
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
@@ -814,6 +835,5 @@ test("pet activity tray renders centered with inline offset", async () => {
   }
 
   assert.match(html, /data-tray-horizontal="center"/);
-  assert.match(html, /style="left:-92px"/);
+  assert.match(html, /style="left:-92px;width:310px"/);
 });
-
