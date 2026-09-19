@@ -111,33 +111,44 @@ export class SessionTransportPeer {
   }
 
   private enqueueCommands(commands: SessionCommand[]) {
-    // 这里的 session command 必须按服务端顺序执行，commandCursor 才能安全 replay。
-    this.commandChain = this.commandChain.then(async () => {
-      for (const command of commands) {
-        try {
-          const result = await this.options.callbacks.handleCommand(command);
-          if (result !== undefined) {
-            this.sendOrQueue({
-              type: "session_command_result",
-              sessionId: this.options.sessionId,
-              commandId: command.commandId,
-              result
-            });
-          }
-        } catch (error) {
-          this.sendOrQueue({
-            type: "session_command_error",
-            sessionId: this.options.sessionId,
-            commandId: command.commandId,
-            message: errorText(error)
-          });
-        } finally {
-          this.commandCursor = Math.max(this.commandCursor, command.seq);
-        }
+    for (const command of commands) {
+      if (parallelSessionCommandTypes.has(command.type)) {
+        void this.executeCommand(command).catch((error) => {
+          console.error(`${this.options.messages?.commandQueueFailed ?? "codexhub machine session command failed"}: ${errorText(error)}`);
+        });
+        continue;
       }
-    }).catch((error) => {
-      console.error(`${this.options.messages?.commandQueueFailed ?? "codexhub machine session command queue failed"}: ${errorText(error)}`);
-    });
+      // State-changing commands must retain server order. Read-only catalog
+      // queries use their own lane so a slow list call cannot block creation.
+      this.commandChain = this.commandChain
+        .then(() => this.executeCommand(command))
+        .catch((error) => {
+          console.error(`${this.options.messages?.commandQueueFailed ?? "codexhub machine session command queue failed"}: ${errorText(error)}`);
+        });
+    }
+  }
+
+  private async executeCommand(command: SessionCommand) {
+    try {
+      const result = await this.options.callbacks.handleCommand(command);
+      if (result !== undefined) {
+        this.sendOrQueue({
+          type: "session_command_result",
+          sessionId: this.options.sessionId,
+          commandId: command.commandId,
+          result
+        });
+      }
+    } catch (error) {
+      this.sendOrQueue({
+        type: "session_command_error",
+        sessionId: this.options.sessionId,
+        commandId: command.commandId,
+        message: errorText(error)
+      });
+    } finally {
+      this.commandCursor = Math.max(this.commandCursor, command.seq);
+    }
   }
 
   private flushPending() {
@@ -157,3 +168,11 @@ export class SessionTransportPeer {
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const parallelSessionCommandTypes = new Set<SessionCommand["type"]>([
+  "list_threads",
+  "list_models",
+  "list_permission_profiles",
+  "list_command_palette",
+  "list_apps"
+]);
